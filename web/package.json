@@ -1,0 +1,16 @@
+{
+  "name": "historica-view-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "wasm": "cd .. && cargo build --lib --release --target wasm32-unknown-unknown && wasm-bindgen --target web --out-dir web/pkg target/wasm32-unknown-unknown/release/historica_view.wasm",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  }
+}

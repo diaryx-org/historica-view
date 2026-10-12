@@ -1,0 +1,119 @@
+:root {
+  --background: #fbfaf8;
+  --surface: #ffffff;
+  --text: #1d1c1a;
+  --quiet: #6f6a63;
+  --rule: #e6e2dc;
+  --accent: #4f7cff;
+  --insert: #e6f6ea;
+  --insert-strong: #1f7a3c;
+  --delete: #fbe9e7;
+  --delete-strong: #b3261e;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light dark;
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #171614;
+    --surface: #1f1e1b;
+    --text: #ece9e4;
+    --quiet: #9b958c;
+    --rule: #34312d;
+    --insert: #17301f;
+    --insert-strong: #6fd08f;
+    --delete: #3a1c1a;
+    --delete-strong: #f08a80;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+  color: var(--text);
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rule);
+}
+
+header h1 { font-size: 15px; margin: 0; letter-spacing: 0.02em; }
+#store { color: var(--quiet); font-family: var(--mono); font-size: 12px; }
+#names { display: flex; gap: 6px; flex-wrap: wrap; }
+
+main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(420px, 1.2fr);
+}
+
+#history { overflow: auto; border-right: 1px solid var(--rule); }
+#detail { overflow: auto; padding: 16px 20px 40px; }
+
+.graph { position: relative; }
+.lanes { position: absolute; top: 0; left: 0; pointer-events: none; }
+
+.rows { list-style: none; margin: 0; padding-right: 12px; }
+.rows li {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0 6px;
+}
+.rows li:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.rows li.selected { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.rows .id { font-family: var(--mono); font-size: 12px; color: var(--quiet); }
+.rows .title { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.rows .author, .rows time { color: var(--quiet); font-size: 12px; }
+
+.name, .mark {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  border: 1px solid var(--rule);
+}
+.name { background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: transparent; }
+.mark.head { color: var(--insert-strong); }
+.mark.divergent { color: var(--delete-strong); }
+.mark.superseded { color: var(--quiet); }
+
+#detail h2 { font-size: 18px; margin: 0 0 8px; }
+.message { font: inherit; white-space: pre-wrap; margin: 0 0 12px; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0 0 12px; font-size: 13px; }
+dt { color: var(--quiet); }
+dd { margin: 0; overflow-wrap: anywhere; }
+code { font-family: var(--mono); font-size: 12px; }
+a { color: var(--accent); }
+.quiet { color: var(--quiet); }
+.error { color: var(--delete-strong); padding: 16px; white-space: pre-wrap; }
+
+details { border: 1px solid var(--rule); border-radius: 6px; margin: 10px 0; background: var(--surface); overflow: hidden; }
+summary { padding: 6px 10px; cursor: pointer; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid var(--rule); }
+details > p { margin: 8px 10px; }
+.kind { font-family: -apple-system, sans-serif; font-size: 11px; padding: 0 6px; border-radius: 4px; }
+.kind.added { background: var(--insert); color: var(--insert-strong); }
+.kind.dropped { background: var(--delete); color: var(--delete-strong); }
+.kind.edited, .kind.moved, .kind.mode { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+.diff { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 12px; }
+.diff td { padding: 0 8px; vertical-align: top; }
+.diff .number { width: 1%; text-align: right; color: var(--quiet); user-select: none; }
+.diff .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff .hunk td { color: var(--quiet); background: color-mix(in srgb, var(--accent) 6%, transparent); padding: 2px 8px; }
+.diff .insert { background: var(--insert); }
+.diff .delete { background: var(--delete); }
