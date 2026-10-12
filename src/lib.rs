@@ -69,6 +69,50 @@ impl Viewer {
             .map_err(|failure| JsError::new(&failure.0))?;
         json(&detail)
     }
+
+    /// Every file in the folder as `at` has it, as JSON.
+    pub fn files(&self, at: &str) -> Result<String, JsError> {
+        json(&self.view.files(at).map_err(fail)?)
+    }
+
+    /// Every revision that names `file`, newest first, as JSON.
+    #[wasm_bindgen(js_name = fileHistory)]
+    pub fn file_history(&self, file: &str) -> Result<String, JsError> {
+        json(&self.view.file_history(file).map_err(fail)?)
+    }
+
+    /// Every revision that names a file under `folder` at `at`, as JSON.
+    #[wasm_bindgen(js_name = folderHistory)]
+    pub fn folder_history(&self, at: &str, folder: &str) -> Result<String, JsError> {
+        json(&self.view.folder_history(at, folder).map_err(fail)?)
+    }
+
+    /// One file as `at` has it, as JSON, or `null`.
+    #[wasm_bindgen(js_name = fileAt)]
+    pub fn file_at(&self, at: &str, file: &str) -> Result<String, JsError> {
+        json(&self.view.file_at(at, file).map_err(fail)?)
+    }
+
+    /// A file's bytes as `at` has them, or `undefined` where they are not held.
+    #[wasm_bindgen(js_name = fileBytes)]
+    pub fn file_bytes(&self, at: &str, file: &str) -> Result<Option<Vec<u8>>, JsError> {
+        self.view.file_bytes(at, file).map_err(fail)
+    }
+
+    /// The lines `file` changed between two revisions, as JSON, or `null`.
+    #[wasm_bindgen(js_name = fileDiff)]
+    pub fn file_diff(&self, from: Option<String>, to: &str, file: &str) -> Result<String, JsError> {
+        json(
+            &self
+                .view
+                .file_diff(from.as_deref(), to, file)
+                .map_err(fail)?,
+        )
+    }
+}
+
+fn fail(failure: view::Failure) -> JsError {
+    JsError::new(&failure.0)
 }
 
 fn json(value: &impl serde::Serialize) -> Result<String, JsError> {

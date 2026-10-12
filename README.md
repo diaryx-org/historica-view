@@ -1,8 +1,11 @@
 # historica-view
 
 A browser view of a [Historica](https://github.com/diaryx-org/historica)
-store's history: the revision graph with its heads and bookmarks, and what each
-revision did to each file.
+store's history. **History** is the revision graph with its heads and
+bookmarks, and what each revision did to each file. **Files** is the folder as
+it stood at any revision: pick a file or folder and its timeline lists every
+revision that wrote it, following a file through its moves, and picking one
+moves the whole folder to that moment.
 
 The `historica` library runs in the page, compiled to WebAssembly. The page
 fetches the store's files, hands them to the library in memory, and asks it
@@ -34,7 +37,9 @@ The dev server lists it at `/store/files` and serves each file at
 | `src/lib.rs` | those answers, spelled as JSON for the page |
 | `web/vite.config.ts` | the dev server that hands the page one local store |
 | `web/src/graph.ts` | lane layout for the revision graph |
-| `web/src/main.ts` | the page |
+| `web/src/history.ts` | the History view |
+| `web/src/files.ts` | the Files view |
+| `web/src/main.ts` | loading the store, and moving between views |
 
 ## License
 

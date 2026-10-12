@@ -29,13 +29,23 @@ fn record_folder(
     parents: Vec<RevisionId>,
     message: &str,
 ) -> RevisionId {
+    record_moving(base, store, parents, message, Vec::new())
+}
+
+fn record_moving(
+    base: &Path,
+    store: &mut Store,
+    parents: Vec<RevisionId>,
+    message: &str,
+    moves: Vec<(String, String)>,
+) -> RevisionId {
     let working = Working::read(base, store.skipped()).expect("the folder");
     let recording = Recording {
         parents,
         author: AUTHOR.to_owned(),
         when: Platform.now().expect("a clock"),
         message: message.to_owned(),
-        moves: Vec::new(),
+        moves,
         at: Vec::new(),
         accepted: BTreeSet::new(),
         only: Restriction::Everything,
@@ -138,4 +148,95 @@ fn a_revision_shows_the_lines_it_changed() {
     let first = view.revision(&root.to_string()).expect("the root");
     assert_eq!(first.against, None);
     assert_eq!(first.files[0].kind, "added");
+}
+
+/// A file that is edited, moved into a folder, edited again, and a second
+/// file beside it.
+fn travelling(test: &str) -> (PathBuf, [RevisionId; 4]) {
+    let (base, mut store) = repository(test);
+    fs::write(base.join("notes.txt"), "first\n").unwrap();
+    fs::write(base.join("other.txt"), "other\n").unwrap();
+    let added = record_folder(&base, &mut store, vec![], "Add notes");
+
+    fs::write(base.join("notes.txt"), "first\nsecond\n").unwrap();
+    let edited = record_folder(&base, &mut store, vec![added], "Add a line");
+
+    fs::create_dir(base.join("docs")).unwrap();
+    fs::rename(base.join("notes.txt"), base.join("docs/notes.txt")).unwrap();
+    let moved = record_moving(
+        &base,
+        &mut store,
+        vec![edited],
+        "File the notes",
+        vec![("notes.txt".into(), "docs/notes.txt".into())],
+    );
+
+    fs::write(base.join("docs/notes.txt"), "first\nsecond\nthird\n").unwrap();
+    let again = record_folder(&base, &mut store, vec![moved], "Add another line");
+    (base, [added, edited, moved, again])
+}
+
+#[test]
+fn a_file_keeps_its_history_through_a_move() {
+    let (base, [added, edited, moved, again]) = travelling("history");
+    let view = View::open(into_memory(&base.join("history"))).expect("the store opens");
+
+    let files = view.files(&again.to_string()).unwrap();
+    let paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
+    assert_eq!(paths, ["docs/notes.txt", "other.txt"]);
+    let notes = &files[0].file;
+
+    let history = view.file_history(notes).unwrap();
+    let seen: Vec<(String, &str, Option<&str>)> = history
+        .iter()
+        .map(|v| (v.revision.clone(), v.kind, v.path.as_deref()))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (again.to_string(), "edited", Some("docs/notes.txt")),
+            (moved.to_string(), "moved", Some("docs/notes.txt")),
+            (edited.to_string(), "edited", Some("notes.txt")),
+            (added.to_string(), "added", Some("notes.txt")),
+        ]
+    );
+
+    // Back in time, the same file is at its old path with its old content.
+    let then = view.file_at(&added.to_string(), notes).unwrap().unwrap();
+    assert_eq!(then.path, "notes.txt");
+    assert_eq!(then.text.as_deref(), Some("first\n"));
+
+    let hunks = view
+        .file_diff(Some(&moved.to_string()), &again.to_string(), notes)
+        .unwrap()
+        .unwrap();
+    let inserted: Vec<&str> = hunks[0]
+        .lines
+        .iter()
+        .filter(|line| line.sign == '+')
+        .map(|line| line.text.as_str())
+        .collect();
+    assert_eq!(inserted, ["third"]);
+}
+
+#[test]
+fn a_folder_history_counts_the_files_it_holds_now() {
+    let (base, [added, edited, moved, again]) = travelling("folder");
+    let view = View::open(into_memory(&base.join("history"))).expect("the store opens");
+
+    let docs = view.folder_history(&again.to_string(), "docs").unwrap();
+    let revisions: Vec<String> = docs.iter().map(|v| v.revision.clone()).collect();
+    assert_eq!(
+        revisions,
+        [again, moved, edited, added].map(|id| id.to_string())
+    );
+
+    let whole = view.folder_history(&again.to_string(), "").unwrap();
+    assert_eq!(whole.last().unwrap().files, 2);
+    // `doc` is a prefix of `docs` and not a folder that holds anything.
+    assert!(
+        view.folder_history(&again.to_string(), "doc")
+            .unwrap()
+            .is_empty()
+    );
 }

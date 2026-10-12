@@ -9,12 +9,16 @@
   <body>
     <header>
       <h1>historica</h1>
+      <nav id="tabs">
+        <a href="#" data-view="history">History</a>
+        <a href="#" data-view="files">Files</a>
+      </nav>
       <span id="store"></span>
       <span id="names"></span>
     </header>
     <main>
-      <section id="history" aria-label="Revisions"></section>
-      <section id="detail" aria-label="Revision"></section>
+      <section id="left"></section>
+      <section id="right"></section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use historica::core::{ChangeId, FileId, RevisionId};
-use historica::format::Mode;
+use historica::format::{Mode, RevisionDocument};
 use historica::store::{Content, Name, Store};
 use historica::tree::{Kind, Tree};
 use serde::Serialize;
@@ -24,6 +24,8 @@ const CONTEXT: usize = 3;
 /// A store, opened on files held in memory.
 pub struct View {
     store: Store<Memory>,
+    /// Every revision in [`View::graph`]'s order, which every history keeps.
+    order: Vec<RevisionId>,
 }
 
 /// Every revision and name, in the order the page draws them.
@@ -98,6 +100,48 @@ pub struct Line {
     pub text: String,
 }
 
+/// One file in a folder.
+#[derive(Debug, Serialize)]
+pub struct TreeFile {
+    pub file: String,
+    pub path: String,
+    /// `lines`, `bytes` or `link`.
+    pub kind: &'static str,
+    pub size: Option<u64>,
+}
+
+/// A revision that names a file, and what it did to it.
+#[derive(Debug, Serialize)]
+pub struct Version {
+    pub revision: String,
+    /// `added`, `edited`, `moved`, `mode` or `dropped`.
+    pub kind: &'static str,
+    /// Where the file was after it, or before it for a drop.
+    pub path: Option<String>,
+}
+
+/// A revision that names files in a folder.
+#[derive(Debug, Serialize)]
+pub struct FolderVersion {
+    pub revision: String,
+    pub files: usize,
+}
+
+/// One file as a revision has it.
+#[derive(Debug, Serialize)]
+pub struct FileAt {
+    pub file: String,
+    pub path: String,
+    pub kind: &'static str,
+    /// The content, for a file of lines.
+    pub text: Option<String>,
+    pub size: Option<u64>,
+    /// Where a link points.
+    pub target: Option<String>,
+    /// Whether this copy holds a file of bytes' bytes.
+    pub held: bool,
+}
+
 /// Why a question could not be answered.
 #[derive(Debug)]
 pub struct Failure(pub String);
@@ -116,7 +160,17 @@ impl View {
     /// Open the store whose files `memory` holds under [`ROOT`].
     pub fn open(memory: Memory) -> Result<Self, Failure> {
         let store = Store::open_on(memory, Path::new(ROOT)).map_err(failed)?;
-        Ok(Self { store })
+        let mut view = Self {
+            store,
+            order: Vec::new(),
+        };
+        view.order = view
+            .graph()
+            .revisions
+            .iter()
+            .filter_map(|summary| summary.id.parse().ok())
+            .collect();
+        Ok(view)
     }
 
     /// Every revision and bookmark.
@@ -264,6 +318,176 @@ impl View {
         })
     }
 
+    /// Every file in the folder as `at` has it, by path.
+    pub fn files(&self, at: &str) -> Result<Vec<TreeFile>, Failure> {
+        let at: RevisionId = at.parse().map_err(failed)?;
+        let tree = self.store.tree(&at).map_err(failed)?;
+        let mut files: Vec<TreeFile> = tree
+            .entries()
+            .map(|(file, entry)| TreeFile {
+                file: file.to_string(),
+                path: entry.path.clone(),
+                kind: kind_name(entry.kind),
+                size: entry.size,
+            })
+            .collect();
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(files)
+    }
+
+    /// Every revision that names `file`, newest first.
+    ///
+    /// A file's identifier outlives its paths, so this follows it through
+    /// every move. A merge that changed the file's content without naming it
+    /// — taking one side's edits whole — is not a version here: it wrote
+    /// nothing of the file's own.
+    pub fn file_history(&self, file: &str) -> Result<Vec<Version>, Failure> {
+        let file: FileId = file.parse().map_err(failed)?;
+        let mut versions: Vec<Version> = Vec::new();
+        for id in &self.order {
+            let Ok(Some(document)) = self.store.get(id) else {
+                continue;
+            };
+            if let Some(kind) = touches(document, &file) {
+                let path = document
+                    .added
+                    .get(&file)
+                    .or_else(|| document.moved.get(&file))
+                    .cloned();
+                versions.push(Version {
+                    revision: id.to_string(),
+                    kind,
+                    path,
+                });
+            }
+        }
+        // A path changes only where a revision adds or moves the file, so
+        // every other version takes the path of the one before it. Across
+        // concurrent branches that is the nearest one in the listing, which
+        // can name the other branch's move.
+        let mut carried: Option<String> = None;
+        for version in versions.iter_mut().rev() {
+            match &version.path {
+                Some(path) => carried = Some(path.clone()),
+                None => version.path = carried.clone(),
+            }
+        }
+        Ok(versions)
+    }
+
+    /// Every revision that names a file under `folder` as `at` has it, newest
+    /// first, with how many of those files each one names.
+    ///
+    /// The folder is the set of files it holds at `at`, followed back through
+    /// their own histories. A file that left the folder before `at` is not
+    /// counted.
+    pub fn folder_history(&self, at: &str, folder: &str) -> Result<Vec<FolderVersion>, Failure> {
+        let at: RevisionId = at.parse().map_err(failed)?;
+        let tree = self.store.tree(&at).map_err(failed)?;
+        let within: BTreeSet<FileId> = tree
+            .files()
+            .filter(|(_, path)| beneath(path, folder))
+            .map(|(file, _)| *file)
+            .collect();
+        let mut versions = Vec::new();
+        for id in &self.order {
+            let Ok(Some(document)) = self.store.get(id) else {
+                continue;
+            };
+            let files = within
+                .iter()
+                .filter(|file| touches(document, file).is_some())
+                .count();
+            if files > 0 {
+                versions.push(FolderVersion {
+                    revision: id.to_string(),
+                    files,
+                });
+            }
+        }
+        Ok(versions)
+    }
+
+    /// One file as `at` has it, or `None` where it is not in that folder.
+    pub fn file_at(&self, at: &str, file: &str) -> Result<Option<FileAt>, Failure> {
+        let at: RevisionId = at.parse().map_err(failed)?;
+        let file: FileId = file.parse().map_err(failed)?;
+        let tree = self.store.tree(&at).map_err(failed)?;
+        let Some(entry) = tree.entry(&file) else {
+            return Ok(None);
+        };
+        let mut shown = FileAt {
+            file: file.to_string(),
+            path: entry.path.clone(),
+            kind: kind_name(entry.kind),
+            text: None,
+            size: entry.size,
+            target: None,
+            held: true,
+        };
+        match entry.kind {
+            Kind::Link => {
+                shown.target = entry.target.as_ref().map(|target| {
+                    historica::update::materialise(&tree, &entry.path, target)
+                        .unwrap_or_else(|| target.to_string())
+                });
+            }
+            _ => match self.store.content_in(&tree, &[at], &file).map_err(failed)? {
+                Content::Lines(state) => shown.text = Some(state.text()),
+                Content::Whole(payload) => {
+                    let bytes = self.store.payload(&payload).map_err(failed)?;
+                    shown.held = bytes.is_some();
+                    if shown.size.is_none() {
+                        shown.size = bytes.map(|bytes| bytes.len() as u64);
+                    }
+                }
+            },
+        }
+        Ok(Some(shown))
+    }
+
+    /// A file of bytes as `at` has it, or `None` where this copy does not
+    /// hold them.
+    pub fn file_bytes(&self, at: &str, file: &str) -> Result<Option<Vec<u8>>, Failure> {
+        let at: RevisionId = at.parse().map_err(failed)?;
+        let file: FileId = file.parse().map_err(failed)?;
+        let tree = self.store.tree(&at).map_err(failed)?;
+        match self.store.content_in(&tree, &[at], &file).map_err(failed)? {
+            Content::Whole(payload) => self.store.payload(&payload).map_err(failed),
+            Content::Lines(state) => Ok(Some(state.text().into_bytes())),
+        }
+    }
+
+    /// The lines that changed in `file` between `from` and `to`.
+    ///
+    /// `from` is `None` for a file's first version, which compares against
+    /// nothing. `None` comes back where either side is not lines.
+    pub fn file_diff(
+        &self,
+        from: Option<&str>,
+        to: &str,
+        file: &str,
+    ) -> Result<Option<Vec<Hunk>>, Failure> {
+        let side = |at: &str| -> Result<Side, Failure> {
+            match self.file_at(at, file)? {
+                None => Ok(Side::Absent),
+                Some(shown) => Ok(match shown.text {
+                    Some(text) if shown.kind == "lines" => Side::Lines(text),
+                    _ => Side::Other(None),
+                }),
+            }
+        };
+        let old = match from {
+            Some(from) => side(from)?,
+            None => Side::Absent,
+        };
+        let new = side(to)?;
+        Ok(match (&old, &new) {
+            (Side::Other(_), _) | (_, Side::Other(_)) => None,
+            _ => Some(hunks(text_or_empty(&old), text_or_empty(&new)).unwrap_or_default()),
+        })
+    }
+
     fn text(
         &self,
         tree: &Tree,
@@ -297,6 +521,42 @@ fn text_or_empty(side: &Side) -> &str {
         Side::Lines(text) => text,
         _ => "",
     }
+}
+
+/// What `document` did to `file`, if it names it at all.
+fn touches(document: &RevisionDocument, file: &FileId) -> Option<&'static str> {
+    if document.added.contains_key(file) {
+        return Some("added");
+    }
+    if document.dropped.contains(file) {
+        return Some("dropped");
+    }
+    if document.edited.contains_key(file)
+        || document.bytes.contains_key(file)
+        || document.links.contains_key(file)
+    {
+        return Some("edited");
+    }
+    if document.moved.contains_key(file) {
+        return Some("moved");
+    }
+    document.modes.contains_key(file).then_some("mode")
+}
+
+fn kind_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Lines => "lines",
+        Kind::Whole => "bytes",
+        _ => "link",
+    }
+}
+
+/// Whether `path` is inside `folder`, where `""` is the whole folder.
+fn beneath(path: &str, folder: &str) -> bool {
+    folder.is_empty()
+        || path
+            .strip_prefix(folder)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 fn mode_name(mode: Mode) -> &'static str {
