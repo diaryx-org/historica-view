@@ -166,3 +166,12 @@ h3 { font-size: 13px; color: var(--quiet); font-weight: 500; margin: 16px 0 4px;
 .listing li:last-child { border-bottom: none; }
 .listing a { text-decoration: none; }
 summary a { font-family: -apple-system, sans-serif; font-size: 11px; margin-left: 8px; }
+
+.sides { list-style: none; padding: 0; margin: 0 0 8px; font-size: 13px; }
+.sides li { display: flex; gap: 6px; align-items: center; }
+.swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.swatch.shared { border: 1px solid var(--rule); }
+.diff.merged .origin { width: 1%; white-space: nowrap; font-size: 11px; }
+.diff.merged .text.shared { color: var(--quiet); }
+.diff.merged .contested { background: color-mix(in srgb, var(--delete) 70%, transparent); }
+.diff.merged .meeting td { font-family: -apple-system, sans-serif; font-size: 12px; color: var(--delete-strong); padding: 4px 8px; background: var(--delete); }

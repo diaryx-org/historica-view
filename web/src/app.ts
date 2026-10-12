@@ -5,7 +5,9 @@ import type { Viewer } from "../pkg/historica_view.js";
 import type { Graph, RevisionSummary } from "./types";
 
 export type Route =
-  | { view: "history"; id: string }
+  /// `against` is what the revision is compared with: its first parent when
+  /// absent, except for a merge, which then shows how its sides met.
+  | { view: "history"; id: string; against?: string }
   /// A file is followed by its identifier, so it is the same file at any
   /// revision whatever it was called there; a folder is only ever a path.
   | { view: "files"; at: string; file?: string; folder?: string };
@@ -20,14 +22,16 @@ export interface App {
 }
 
 export function href(route: Route): string {
-  if (route.view === "history") return `#history/${route.id}`;
+  if (route.view === "history") return `#history/${route.id}${route.against ? `/vs/${route.against}` : ""}`;
   if (route.file) return `#files/${route.at}/f/${route.file}`;
   return `#files/${route.at}/d/${encodeURI(route.folder ?? "")}`;
 }
 
 export function parse(hash: string): Route | null {
   const parts = hash.replace(/^#/, "").split("/");
-  if (parts[0] === "history" && parts[1]) return { view: "history", id: parts[1] };
+  if (parts[0] === "history" && parts[1]) {
+    return parts[2] === "vs" && parts[3] ? { view: "history", id: parts[1], against: parts[3] } : { view: "history", id: parts[1] };
+  }
   if (parts[0] === "files" && parts[1]) {
     if (parts[2] === "f" && parts[3]) return { view: "files", at: parts[1], file: parts[3] };
     return { view: "files", at: parts[1], folder: decodeURI(parts.slice(3).join("/")) };

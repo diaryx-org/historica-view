@@ -8,6 +8,7 @@ use std::path::Path;
 
 use historica::core::{ChangeId, FileId, RevisionId};
 use historica::format::{Mode, RevisionDocument};
+use historica::merge::Contest;
 use historica::store::{Content, Name, Store};
 use historica::tree::{Kind, Tree};
 use serde::Serialize;
@@ -98,6 +99,51 @@ pub struct Hunk {
 pub struct Line {
     pub sign: char,
     pub text: String,
+}
+
+/// How a merge's parents came together, file by file.
+#[derive(Debug, Serialize)]
+pub struct MergeDetail {
+    pub id: String,
+    pub parents: Vec<String>,
+    /// Only the files the parents both changed, or the merge changed itself.
+    pub files: Vec<MergeFile>,
+}
+
+/// One file the parents met in.
+#[derive(Debug, Serialize)]
+pub struct MergeFile {
+    pub file: String,
+    pub path: String,
+    /// The parents' automatic merge, line by line, with who wrote each.
+    pub lines: Vec<MergeLine>,
+    /// Where concurrent work met, as indexes into `lines`.
+    pub contests: Vec<ContestSummary>,
+    /// What the merge recorded on top of the automatic merge; `None` where it
+    /// took the automatic merge as it was.
+    pub hand: Option<Vec<Hunk>>,
+}
+
+/// One line of an automatic merge.
+#[derive(Debug, Serialize)]
+pub struct MergeLine {
+    pub text: String,
+    /// The revision that wrote it.
+    pub origin: String,
+    /// The parent whose side alone wrote it, by index, or `None` for a line
+    /// every parent already had.
+    pub side: Option<usize>,
+}
+
+/// One region where concurrent revisions met.
+#[derive(Debug, Serialize)]
+pub struct ContestSummary {
+    pub at: usize,
+    /// Zero for a removal that met writing beside it.
+    pub len: usize,
+    /// `insertion`, `deletion` or `terminator`.
+    pub kind: &'static str,
+    pub revisions: Vec<String>,
 }
 
 /// One file in a folder.
@@ -239,18 +285,17 @@ impl View {
         Graph { revisions, names }
     }
 
-    /// What `id` did, against its first parent.
+    /// What `id` did, against `against` or else its first parent.
     ///
-    /// A merge is compared against its first parent only, which shows what the
-    /// merge brought in from the others. Its other sides are a later screen.
-    pub fn revision(&self, id: &str) -> Result<RevisionDetail, Failure> {
+    /// Against one parent of a merge, this is what the merge brought in from
+    /// the others; [`View::merge`] is how the sides met.
+    pub fn revision(&self, id: &str, against: Option<&str>) -> Result<RevisionDetail, Failure> {
         let id: RevisionId = id.parse().map_err(failed)?;
-        let document = self
-            .store
-            .get(&id)
-            .map_err(failed)?
-            .ok_or_else(|| Failure(format!("no revision {id}")))?;
-        let against = document.parents.iter().next().copied();
+        let document = self.document(&id)?;
+        let against = match against {
+            Some(against) => Some(against.parse::<RevisionId>().map_err(failed)?),
+            None => document.parents.iter().next().copied(),
+        };
 
         let before = match against {
             Some(parent) => self.store.tree(&parent).map_err(failed)?,
@@ -315,6 +360,101 @@ impl View {
             id: id.to_string(),
             against: against.map(|parent| parent.to_string()),
             files: changes,
+        })
+    }
+
+    /// How the parents of the merge `id` came together.
+    ///
+    /// For each file of lines the parents disagree about, the merge the
+    /// library makes of them — every line labelled with the revision that
+    /// wrote it and the parent whose side that was — and the regions where
+    /// their work met. A file only one side changed is left out: the merge
+    /// took that side whole, and the comparison against the other parent
+    /// shows it.
+    pub fn merge(&self, id: &str) -> Result<MergeDetail, Failure> {
+        let id: RevisionId = id.parse().map_err(failed)?;
+        let parents: Vec<RevisionId> = self.document(&id)?.parents.iter().copied().collect();
+        let sides: Vec<BTreeSet<RevisionId>> = parents
+            .iter()
+            .map(|parent| self.ancestors(*parent))
+            .collect();
+        let trees = parents
+            .iter()
+            .map(|parent| self.store.tree(parent).map_err(failed))
+            .collect::<Result<Vec<Tree>, Failure>>()?;
+        let after = self.store.tree(&id).map_err(failed)?;
+
+        let mut files = Vec::new();
+        for (file, entry) in after.entries() {
+            if entry.kind != Kind::Lines {
+                continue;
+            }
+            // A side that never had the file did not disagree about it.
+            let mut texts = Vec::new();
+            for (parent, tree) in parents.iter().zip(&trees) {
+                match tree.entry(file) {
+                    Some(held) if held.kind == Kind::Lines => {
+                        texts.push(self.store.content(parent, file).map_err(failed)?.text());
+                    }
+                    _ => break,
+                }
+            }
+            if texts.len() < parents.len() || texts.iter().all(|text| *text == texts[0]) {
+                continue;
+            }
+            let merged = self
+                .store
+                .merged_content_of(&parents, file)
+                .map_err(failed)?;
+            let automatic = merged.state.text();
+            let recorded = self.store.content(&id, file).map_err(failed)?.text();
+            if merged.contested.is_empty() && recorded == automatic && texts.contains(&automatic) {
+                continue;
+            }
+            let lines = merged
+                .state
+                .items()
+                .iter()
+                .zip(&merged.origins)
+                .map(|(item, origin)| {
+                    let within: Vec<usize> = (0..sides.len())
+                        .filter(|side| sides[*side].contains(origin))
+                        .collect();
+                    MergeLine {
+                        text: item.text.clone(),
+                        origin: origin.to_string(),
+                        side: (within.len() < sides.len())
+                            .then(|| within.first().copied())
+                            .flatten(),
+                    }
+                })
+                .collect();
+            files.push(MergeFile {
+                file: file.to_string(),
+                path: entry.path.clone(),
+                lines,
+                contests: merged
+                    .contested
+                    .iter()
+                    .map(|contest| ContestSummary {
+                        at: contest.at,
+                        len: contest.len,
+                        kind: match contest.kind {
+                            Contest::Insertion => "insertion",
+                            Contest::Deletion => "deletion",
+                            Contest::Terminator => "terminator",
+                        },
+                        revisions: contest.revisions.iter().map(ToString::to_string).collect(),
+                    })
+                    .collect(),
+                hand: hunks(&automatic, &recorded),
+            });
+        }
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(MergeDetail {
+            id: id.to_string(),
+            parents: parents.iter().map(ToString::to_string).collect(),
+            files,
         })
     }
 
@@ -486,6 +626,28 @@ impl View {
             (Side::Other(_), _) | (_, Side::Other(_)) => None,
             _ => Some(hunks(text_or_empty(&old), text_or_empty(&new)).unwrap_or_default()),
         })
+    }
+
+    fn document(&self, id: &RevisionId) -> Result<&RevisionDocument, Failure> {
+        self.store
+            .get(id)
+            .map_err(failed)?
+            .ok_or_else(|| Failure(format!("no revision {id}")))
+    }
+
+    /// `id` and every revision it descends from.
+    fn ancestors(&self, id: RevisionId) -> BTreeSet<RevisionId> {
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![id];
+        while let Some(next) = stack.pop() {
+            if !seen.insert(next) {
+                continue;
+            }
+            if let Ok(Some(document)) = self.store.get(&next) {
+                stack.extend(document.parents.iter().copied());
+            }
+        }
+        seen
     }
 
     fn text(

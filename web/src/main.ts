@@ -57,7 +57,7 @@ async function main() {
       tab.href = href(last[tab.dataset.view as Route["view"]]);
     }
     document.body.dataset.view = route.view;
-    if (route.view === "history") showHistory(app, route.id);
+    if (route.view === "history") showHistory(app, route);
     else showFiles(app, route);
   };
 

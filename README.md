@@ -38,6 +38,7 @@ The dev server lists it at `/store/files` and serves each file at
 | `web/vite.config.ts` | the dev server that hands the page one local store |
 | `web/src/graph.ts` | lane layout for the revision graph |
 | `web/src/history.ts` | the History view |
+| `web/src/merge.ts` | a merge: how its sides met, line by line |
 | `web/src/files.ts` | the Files view |
 | `web/src/main.ts` | loading the store, and moving between views |
 

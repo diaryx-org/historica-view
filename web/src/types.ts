@@ -53,6 +53,34 @@ export interface RevisionDetail {
   files: FileChange[];
 }
 
+export interface MergeLine {
+  text: string;
+  origin: string;
+  /// The parent whose side alone wrote the line, or null for one they shared.
+  side: number | null;
+}
+
+export interface ContestSummary {
+  at: number;
+  len: number;
+  kind: "insertion" | "deletion" | "terminator";
+  revisions: string[];
+}
+
+export interface MergeFile {
+  file: string;
+  path: string;
+  lines: MergeLine[];
+  contests: ContestSummary[];
+  hand: Hunk[] | null;
+}
+
+export interface MergeDetail {
+  id: string;
+  parents: string[];
+  files: MergeFile[];
+}
+
 export interface TreeFile {
   file: string;
   path: string;

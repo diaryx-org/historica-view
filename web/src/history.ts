@@ -1,8 +1,9 @@
 // The revision graph, and what one revision did.
 
-import { type App, href } from "./app";
+import { type App, href, type Route } from "./app";
 import { ago, element, error, hunksTable, link, short, title, who } from "./dom";
 import { layout } from "./graph";
+import { mergeView } from "./merge";
 import type { FileChange, NameSummary, RevisionDetail, RevisionSummary } from "./types";
 
 const ROW = 30;
@@ -84,13 +85,13 @@ function graphPane(app: App): { list: HTMLElement; items: Map<string, HTMLElemen
   return drawn;
 }
 
-function fileSection(app: App, revision: RevisionSummary, file: FileChange): HTMLElement {
+function fileSection(app: App, revision: RevisionSummary, against: string | null, file: FileChange): HTMLElement {
   const path =
     file.from && file.to && file.from !== file.to ? `${file.from} → ${file.to}` : (file.to ?? file.from ?? file.file);
   const extra = file.mode ? ` (${file.mode[0]} → ${file.mode[1]})` : "";
   // A dropped file is not in the folder this revision leaves, so it is
   // looked at in the one before.
-  const at = file.kind === "dropped" ? (revision.parents[0] ?? revision.id) : revision.id;
+  const at = file.kind === "dropped" ? (against ?? revision.id) : revision.id;
   const open = { view: "files" as const, at, file: file.file };
   const body =
     file.hunks === null
@@ -113,7 +114,40 @@ function fileSection(app: App, revision: RevisionSummary, file: FileChange): HTM
   );
 }
 
-function detail(app: App, revision: RevisionSummary, change: RevisionDetail): HTMLElement[] {
+/// For a merge, a choice between how its sides met and each parent alone.
+function compareTabs(app: App, revision: RevisionSummary, against: string | undefined): HTMLElement {
+  const tabs = element("div", { class: "tabs" });
+  const choices: [string | undefined, string][] = [
+    [undefined, "How the sides met"],
+    ...revision.parents.map((parent, index): [string, string] => [parent, `Against parent ${index + 1}`]),
+  ];
+  for (const [choice, label] of choices) {
+    const tab = element("button", { type: "button", class: choice === against ? "on" : "" }, label);
+    if (choice) tab.title = `${short(choice)} ${title(app.byId.get(choice)?.message ?? "")}`;
+    tab.addEventListener("click", () => app.go({ view: "history", id: revision.id, against: choice }));
+    tabs.append(tab);
+  }
+  return element("div", { class: "controls" }, tabs);
+}
+
+function changes(app: App, revision: RevisionSummary, change: RevisionDetail): HTMLElement[] {
+  const to = (id: string) => link(short(id), href({ view: "history", id }), () => app.go({ view: "history", id }));
+  const merge = revision.parents.length > 1;
+  const against = change.against
+    ? element(
+        "p",
+        { class: "quiet" },
+        "Compared with ",
+        to(change.against),
+        merge ? `, parent ${revision.parents.indexOf(change.against) + 1}: what the merge brought in from the others.` : ".",
+      )
+    : element("p", { class: "quiet" }, "A root: everything here is new.");
+  const sections = change.files.map((file) => fileSection(app, revision, change.against, file));
+  if (!sections.length) sections.push(element("p", { class: "quiet" }, "No file changed."));
+  return [against, element("div", { class: "files" }, ...sections)];
+}
+
+function detail(app: App, revision: RevisionSummary, route: { id: string; against?: string }): HTMLElement[] {
   const [first, ...rest] = revision.message.trim().split("\n");
   const body = rest.join("\n").trim();
   const to = (id: string) => link(short(id), href({ view: "history", id }), () => app.go({ view: "history", id }));
@@ -141,28 +175,23 @@ function detail(app: App, revision: RevisionSummary, change: RevisionDetail): HT
   const files = { view: "files" as const, at: revision.id, folder: "" };
   facts.append(element("dt", {}, "folder"), element("dd", {}, link("browse the files as they were", href(files), () => app.go(files))));
 
-  const against = change.against
-    ? element(
-        "p",
-        { class: "quiet" },
-        "Compared with ",
-        to(change.against),
-        revision.parents.length > 1 ? ", its first parent." : ".",
-      )
-    : element("p", { class: "quiet" }, "A root: everything here is new.");
-  const sections = change.files.map((file) => fileSection(app, revision, file));
-  if (!sections.length) sections.push(element("p", { class: "quiet" }, "No file changed."));
+  const merge = revision.parents.length > 1;
+  const shown =
+    merge && !route.against
+      ? mergeView(app, revision)
+      : changes(app, revision, JSON.parse(app.viewer.revision(route.id, route.against)) as RevisionDetail);
 
   return [
     element("h2", {}, first || "(no message)"),
     ...(body ? [element("pre", { class: "message" }, body)] : []),
     facts,
-    against,
-    element("div", { class: "files" }, ...sections),
+    ...(merge ? [compareTabs(app, revision, route.against)] : []),
+    ...shown,
   ];
 }
 
-export function showHistory(app: App, id: string) {
+export function showHistory(app: App, route: Extract<Route, { view: "history" }>) {
+  const id = route.id;
   const revision = app.byId.get(id);
   const { list, items } = graphPane(app);
   if (app.left.firstChild !== list) app.left.replaceChildren(list);
@@ -173,7 +202,7 @@ export function showHistory(app: App, id: string) {
     return;
   }
   try {
-    app.right.replaceChildren(...detail(app, revision, JSON.parse(app.viewer.revision(id)) as RevisionDetail));
+    app.right.replaceChildren(...detail(app, revision, route));
   } catch (failure) {
     app.right.replaceChildren(error(failure));
   }

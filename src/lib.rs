@@ -61,13 +61,15 @@ impl Viewer {
         json(&self.view.graph())
     }
 
-    /// What one revision did to each file, as JSON.
-    pub fn revision(&self, id: &str) -> Result<String, JsError> {
-        let detail = self
-            .view
-            .revision(id)
-            .map_err(|failure| JsError::new(&failure.0))?;
-        json(&detail)
+    /// What one revision did to each file, against `against` or else its
+    /// first parent, as JSON.
+    pub fn revision(&self, id: &str, against: Option<String>) -> Result<String, JsError> {
+        json(&self.view.revision(id, against.as_deref()).map_err(fail)?)
+    }
+
+    /// How a merge's parents came together, as JSON.
+    pub fn merge(&self, id: &str) -> Result<String, JsError> {
+        json(&self.view.merge(id).map_err(fail)?)
     }
 
     /// Every file in the folder as `at` has it, as JSON.

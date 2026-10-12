@@ -125,7 +125,9 @@ fn a_revision_shows_the_lines_it_changed() {
     let (base, [root, left, right, _]) = diamond("detail");
     let view = View::open(into_memory(&base.join("history"))).expect("the store opens");
 
-    let detail = view.revision(&left.to_string()).expect("the revision");
+    let detail = view
+        .revision(&left.to_string(), None)
+        .expect("the revision");
     assert_eq!(detail.against, Some(root.to_string()));
     assert_eq!(detail.files.len(), 1);
     let poem = &detail.files[0];
@@ -140,12 +142,14 @@ fn a_revision_shows_the_lines_it_changed() {
         [(' ', "one"), ('-', "two"), ('+', "2"), (' ', "three")]
     );
 
-    let added = view.revision(&right.to_string()).expect("the revision");
+    let added = view
+        .revision(&right.to_string(), None)
+        .expect("the revision");
     assert_eq!(added.files.len(), 1);
     assert_eq!(added.files[0].kind, "added");
     assert_eq!(added.files[0].to.as_deref(), Some("notes.txt"));
 
-    let first = view.revision(&root.to_string()).expect("the root");
+    let first = view.revision(&root.to_string(), None).expect("the root");
     assert_eq!(first.against, None);
     assert_eq!(first.files[0].kind, "added");
 }
@@ -239,4 +243,117 @@ fn a_folder_history_counts_the_files_it_holds_now() {
             .unwrap()
             .is_empty()
     );
+}
+
+/// Two branches that both edit one poem, and the merge of them as `merged`.
+fn meeting(test: &str, left: &str, right: &str, merged: &str) -> (PathBuf, [RevisionId; 4]) {
+    let (base, mut store) = repository(test);
+    fs::write(base.join("poem.txt"), "one\ntwo\nthree\nfour\nfive\n").unwrap();
+    fs::write(base.join("other.txt"), "other\n").unwrap();
+    let root = record_folder(&base, &mut store, vec![], "Begin the poem");
+
+    fs::write(base.join("poem.txt"), left).unwrap();
+    let ours = record_folder(&base, &mut store, vec![root], "Left");
+
+    fs::write(base.join("poem.txt"), right).unwrap();
+    fs::write(base.join("other.txt"), "other, changed on one side\n").unwrap();
+    let theirs = record_folder(&base, &mut store, vec![root], "Right");
+
+    fs::write(base.join("poem.txt"), merged).unwrap();
+    let merge = record_folder(&base, &mut store, vec![ours, theirs], "Merge");
+    (base, [root, ours, theirs, merge])
+}
+
+#[test]
+fn a_merge_labels_each_line_with_the_side_that_wrote_it() {
+    let (base, [root, ours, theirs, merge]) = meeting(
+        "merge-clean",
+        "ONE\ntwo\nthree\nfour\nfive\n",
+        "one\ntwo\nthree\nfour\nFIVE\n",
+        "ONE\ntwo\nthree\nfour\nFIVE\n",
+    );
+    let view = View::open(into_memory(&base.join("history"))).expect("the store opens");
+    let detail = view.merge(&merge.to_string()).unwrap();
+    // Parents are held in digest order, whatever order they were given in.
+    let side = |id: RevisionId| detail.parents.iter().position(|p| *p == id.to_string());
+    assert_eq!(detail.parents.len(), 2);
+
+    // `other.txt` changed on one side only, so the merge took it whole.
+    assert_eq!(detail.files.len(), 1);
+    let poem = &detail.files[0];
+    assert_eq!(poem.path, "poem.txt");
+    let sides: Vec<(&str, Option<usize>, String)> = poem
+        .lines
+        .iter()
+        .map(|line| (line.text.as_str(), line.side, line.origin.clone()))
+        .collect();
+    assert_eq!(
+        sides,
+        [
+            ("ONE", side(ours), ours.to_string()),
+            ("two", None, root.to_string()),
+            ("three", None, root.to_string()),
+            ("four", None, root.to_string()),
+            ("FIVE", side(theirs), theirs.to_string()),
+        ]
+    );
+    assert!(poem.contests.is_empty());
+    assert!(poem.hand.is_none());
+
+    // Against each parent, the merge is what it brought in from the other.
+    let against = |parent: RevisionId| {
+        let detail = view
+            .revision(&merge.to_string(), Some(&parent.to_string()))
+            .unwrap();
+        assert_eq!(detail.against, Some(parent.to_string()));
+        detail
+            .files
+            .into_iter()
+            .map(|file| file.to)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        against(ours),
+        [Some("other.txt".into()), Some("poem.txt".into())]
+    );
+    assert_eq!(against(theirs), [Some("poem.txt".to_string())]);
+}
+
+#[test]
+fn a_merge_shows_where_the_sides_met_and_what_was_settled_by_hand() {
+    let (base, [_, ours, theirs, merge]) = meeting(
+        "merge-contested",
+        "one\ntwo\nthree, said the left\nfour\nfive\n",
+        "one\ntwo\nthree, said the right\nfour\nfive\n",
+        "one\ntwo\nthree, said both\nfour\nfive\n",
+    );
+    let view = View::open(into_memory(&base.join("history"))).expect("the store opens");
+    let poem = &view.merge(&merge.to_string()).unwrap().files[0];
+
+    assert!(!poem.contests.is_empty());
+    let met: BTreeSet<Option<usize>> = poem
+        .contests
+        .iter()
+        .flat_map(|contest| &poem.lines[contest.at..contest.at + contest.len])
+        .map(|line| line.side)
+        .collect();
+    assert_eq!(met, BTreeSet::from([Some(0), Some(1)]));
+    let written: BTreeSet<(&str, String)> = poem
+        .lines
+        .iter()
+        .map(|line| (line.text.as_str(), line.origin.clone()))
+        .collect();
+    assert!(written.contains(&("three, said the left", ours.to_string())));
+    assert!(written.contains(&("three, said the right", theirs.to_string())));
+
+    let hand: Vec<(char, &str)> = poem
+        .hand
+        .as_ref()
+        .expect("settled by hand")
+        .iter()
+        .flat_map(|hunk| &hunk.lines)
+        .filter(|line| line.sign == '+')
+        .map(|line| (line.sign, line.text.as_str()))
+        .collect();
+    assert_eq!(hand, [('+', "three, said both")]);
 }
