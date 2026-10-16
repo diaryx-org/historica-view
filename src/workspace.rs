@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use historica::core::{FileId, RevisionId};
 use historica::store::Content;
 use historica::tree::Kind;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::document::{Document, Target, link_target, render};
 use crate::view::{Failure, View};
@@ -36,7 +36,7 @@ const CLOSED: [&str; 2] = ["done", "dropped"];
 const DEPTH: usize = 64;
 
 /// One task, as the list shows it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Task {
     pub file: String,
     pub path: String,
@@ -51,7 +51,7 @@ pub struct Task {
 }
 
 /// One task with its body.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TaskDetail {
     #[serde(flatten)]
     pub task: Task,
@@ -60,7 +60,7 @@ pub struct TaskDetail {
 }
 
 /// What the front page of a repository shows.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Overview {
     /// The root document's title, where it has one.
     pub title: Option<String>,
@@ -71,7 +71,7 @@ pub struct Overview {
 }
 
 /// The README, rendered.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Readme {
     pub file: String,
     pub path: String,

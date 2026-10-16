@@ -29,7 +29,15 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 similar = "3.2"
 # Must match the `wasm-bindgen` CLI that generates the bindings, exactly.
-wasm-bindgen = "=0.2.127"
+# Optional, under `bindings`: a Rust host that asks `View` its questions
+# directly — the hub's worker — takes none of the page's bindings, and is free
+# to resolve whichever wasm-bindgen its own runtime needs.
+wasm-bindgen = { version = "=0.2.127", optional = true }
+
+[features]
+default = ["bindings"]
+# The classes the page imports: `Files`, `Manifest` and `Viewer`.
+bindings = ["dep:wasm-bindgen"]
 
 # historica reaches getrandom for `record`, which the view never calls, but a
 # freestanding wasm build refuses to compile without a backend chosen.

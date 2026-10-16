@@ -1,0 +1,20 @@
+[package]
+name = "historica-hub-client"
+description = "The hub in the browser: takes over the page the worker rendered"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+console_error_panic_hook = "0.1"
+dioxus.workspace = true
+dioxus-web.workspace = true
+historica-hub-app = { workspace = true, features = ["client"] }
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element"] }

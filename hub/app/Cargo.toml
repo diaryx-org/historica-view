@@ -1,0 +1,27 @@
+[package]
+name = "historica-hub-app"
+description = "The hub's pages: rendered by the worker, and by the browser once it takes over"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# Navigation without a page load: the browser fetches the next page's data and
+# renders it. The worker renders the same components without it.
+client = ["dep:wasm-bindgen-futures", "dep:web-sys", "dep:js-sys", "dep:wasm-bindgen"]
+
+[dependencies]
+dioxus.workspace = true
+historica-view.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+js-sys = { version = "0.3", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "History", "Location", "Navigator", "Clipboard", "Response", "Element", "PopStateEvent"] }
+
+[dev-dependencies]
+dioxus-ssr.workspace = true

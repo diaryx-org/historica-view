@@ -61,6 +61,13 @@ by, and each file against the digest its line names, before the store sees it.
 `?offer=<url>` points the same page at any other published copy, where that
 host allows the page to fetch from it.
 
+## The hub
+
+[`hub/`](hub/README.md) is the same repository served from Cloudflare: a
+worker that renders each repository's front page and tasks with Dioxus, R2
+holding what `publish.sh` makes, and a Durable Object per repository holding
+it open. It is a spike, in a workspace of its own.
+
 ## What is here
 
 | Path | What it is |

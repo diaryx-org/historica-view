@@ -1,0 +1,2 @@
+# Copy to .dev.vars for `wrangler dev`. push.sh sends this as its bearer token.
+HUB_TOKEN=dev-token
