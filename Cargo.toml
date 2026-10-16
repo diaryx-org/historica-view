@@ -14,11 +14,17 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# A workspace's frontmatter, read with the parser historica-remark reads
+# remarks with. YAML only: it is what prov's workspaces write.
+fig = "7"
+fig-yaml = { version = "7", default-features = false, features = ["fig"] }
 # A registry version and no path, as historica-git has it: the view reaches
 # what historica published and nothing else. `disk` is off because a browser
 # has no disk; the store is handed its files in memory.
 historica = { version = "1.0.0-rc.8", default-features = false }
 jiff = "0.2"
+# READMEs and tasks, rendered for the page; the page sanitises what comes out.
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 similar = "3.2"

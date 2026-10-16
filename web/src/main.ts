@@ -1,53 +1,41 @@
-import init, { Files, Viewer } from "../pkg/historica_view.js";
-import { type App, href, parse, type Route } from "./app";
+import init, { type Viewer } from "../pkg/historica_view.js";
+import { type App, href, type Origin, parse, type Route } from "./app";
 import { element, error } from "./dom";
 import { showFiles } from "./files";
 import { showHistory, step } from "./history";
+import { load } from "./load";
+import { showOverview } from "./overview";
+import { showTasks } from "./tasks";
 import type { Graph } from "./types";
 
 const left = document.querySelector<HTMLElement>("#left")!;
 const right = document.querySelector<HTMLElement>("#right")!;
 
-async function load(): Promise<{ root: string; viewer: Viewer }> {
-  const listing = await fetch("/store/files");
-  if (!listing.ok) throw new Error(await listing.text());
-  const { root, files: paths } = (await listing.json()) as { root: string; files: string[] };
-
-  const files = new Files();
-  const queue = [...paths];
-  const worker = async () => {
-    for (let path = queue.shift(); path !== undefined; path = queue.shift()) {
-      const response = await fetch(`/store/raw/${path.split("/").map(encodeURIComponent).join("/")}`);
-      if (!response.ok) throw new Error(`${path}: ${response.status}`);
-      files.add(path, new Uint8Array(await response.arrayBuffer()));
-    }
-  };
-  await Promise.all(Array.from({ length: 16 }, worker));
-  return { root, viewer: Viewer.open(files) };
-}
-
 async function main() {
   await init();
-  let loaded: { root: string; viewer: Viewer };
+  left.replaceChildren(element("p", { class: "quiet loading" }, "Fetching the history…"));
+  let loaded: { origin: Origin; viewer: Viewer };
   try {
     loaded = await load();
   } catch (failure) {
     left.replaceChildren(error(failure));
     return;
   }
-  const { root, viewer } = loaded;
+  const { origin, viewer } = loaded;
   const graph = JSON.parse(viewer.graph()) as Graph;
-  document.querySelector("#store")!.textContent = root;
+  document.querySelector("#store")!.textContent = origin.label;
   document.querySelector("#names")!.replaceChildren(
     ...graph.names.map((name) => element("span", { class: "name", title: `${name.kind} ${name.target}` }, name.name)),
   );
 
   const newest = graph.revisions.find((revision) => revision.head)?.id ?? graph.revisions[0]?.id ?? "";
-  let route: Route = { view: "history", id: newest };
+  let route: Route = { view: "overview", at: newest };
   // Where each view was last, so switching tabs returns there.
-  const last: { history: Route; files: Route } = {
-    history: { view: "history", id: newest },
+  const last: Record<Route["view"], Route> = {
+    overview: { view: "overview", at: newest },
     files: { view: "files", at: newest, folder: "" },
+    history: { view: "history", id: newest },
+    tasks: { view: "tasks", at: newest },
   };
 
   const show = () => {
@@ -58,11 +46,14 @@ async function main() {
     }
     document.body.dataset.view = route.view;
     if (route.view === "history") showHistory(app, route);
-    else showFiles(app, route);
+    else if (route.view === "files") showFiles(app, route);
+    else if (route.view === "tasks") showTasks(app, route);
+    else showOverview(app, route);
   };
 
   const app: App = {
     viewer,
+    origin,
     graph,
     byId: new Map(graph.revisions.map((revision) => [revision.id, revision])),
     left,

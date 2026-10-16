@@ -74,6 +74,9 @@ function localStore(): Plugin {
 }
 
 export default defineConfig({
+  // Relative, so a published site works from whatever folder it is served
+  // under: `name.example.org/` and `example.org/repos/name/` alike.
+  base: "./",
   plugins: [localStore()],
   server: { port: Number(process.env.PORT ?? 5174) },
 });

@@ -219,6 +219,11 @@ impl View {
         Ok(view)
     }
 
+    /// The store itself, for the questions other modules answer.
+    pub(crate) fn store(&self) -> &Store<Memory> {
+        &self.store
+    }
+
     /// Every revision and bookmark.
     pub fn graph(&self) -> Graph {
         let history = self.store.history();

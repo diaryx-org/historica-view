@@ -1,18 +1,23 @@
 //! A browser view of a Historica store's history.
 //!
 //! The page fetches a store's files, hands them to [`Files`], and opens a
-//! [`Viewer`] on them. Everything it shows is asked of the `historica` library
+//! [`Viewer`] on them. Where the store is a published copy, [`Manifest`] says
+//! which files those are. Everything it shows is asked of the `historica` library
 //! through [`view::View`]; this module only spells those answers as JSON for
 //! the page to read.
 
 #![forbid(unsafe_code)]
 
+pub mod document;
 pub mod memory;
+pub mod published;
 pub mod view;
+pub mod workspace;
 
 use wasm_bindgen::prelude::*;
 
 use crate::memory::Memory;
+use crate::published::{Published, verified};
 use crate::view::{ROOT, View};
 
 /// A store's files, gathered by the page before it opens a [`Viewer`].
@@ -36,9 +41,53 @@ impl Files {
         self.memory.insert(format!("{ROOT}/{relative}"), bytes);
     }
 
+    /// Add one file a manifest listed, refusing bytes that are not the ones
+    /// it named.
+    #[wasm_bindgen(js_name = addListed)]
+    pub fn add_listed(&mut self, path: &str, bytes: Vec<u8>, digest: &str) -> Result<(), JsError> {
+        if !verified(&bytes, digest) {
+            return Err(JsError::new(&format!(
+                "{path} is not the file the manifest names; the copy has changed since it was listed"
+            )));
+        }
+        self.add(path, bytes);
+        Ok(())
+    }
+
     /// How many files have been added.
     pub fn count(&self) -> usize {
         self.memory.len()
+    }
+}
+
+/// A published copy's manifest, in either shape.
+#[wasm_bindgen]
+pub struct Manifest {
+    published: Published,
+}
+
+#[wasm_bindgen]
+impl Manifest {
+    /// Read the text of a manifest.
+    pub fn read(text: &str) -> Result<Manifest, JsError> {
+        Ok(Self {
+            published: Published::read(text).map_err(fail)?,
+        })
+    }
+
+    /// The pages still to fetch, relative to the manifest.
+    pub fn wanted(&self) -> Vec<String> {
+        self.published.wanted()
+    }
+
+    /// Take one page, by the path [`Manifest::wanted`] named it by.
+    pub fn page(&mut self, path: &str, bytes: Vec<u8>) -> Result<(), JsError> {
+        self.published.page(path, &bytes).map_err(fail)
+    }
+
+    /// Every file of the copy, as JSON, once every page has arrived.
+    pub fn listing(&self) -> Result<String, JsError> {
+        json(&self.published.listing().map_err(fail)?)
     }
 }
 
@@ -110,6 +159,21 @@ impl Viewer {
                 .file_diff(from.as_deref(), to, file)
                 .map_err(fail)?,
         )
+    }
+
+    /// Every task as `at` has it, as JSON.
+    pub fn tasks(&self, at: &str) -> Result<String, JsError> {
+        json(&self.view.tasks(at).map_err(fail)?)
+    }
+
+    /// One task with its body, as JSON, or `null`.
+    pub fn task(&self, at: &str, file: &str) -> Result<String, JsError> {
+        json(&self.view.task(at, file).map_err(fail)?)
+    }
+
+    /// The front page as `at` has it, as JSON.
+    pub fn overview(&self, at: &str) -> Result<String, JsError> {
+        json(&self.view.overview(at).map_err(fail)?)
     }
 }
 
