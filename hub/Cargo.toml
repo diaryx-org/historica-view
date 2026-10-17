@@ -1,0 +1,34 @@
+# The hub: historica-view's questions answered on Cloudflare, rendered with
+# Dioxus on the worker and taken over by Dioxus in the browser.
+#
+# Its own workspace, beside the page rather than inside it: the page pins the
+# wasm-bindgen its bindings were generated with, and the worker resolves the
+# one workers-rs needs.
+[workspace]
+resolver = "3"
+members = ["app", "client", "worker"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/diaryx-org/historica-view"
+publish = false
+
+[workspace.dependencies]
+# An alpha, as diaryx's own Dioxus spike takes it, pinned exactly so that one
+# alpha's breaking changes arrive as a deliberate bump.
+dioxus = { version = "=0.8.0-alpha.2", default-features = false, features = ["macro", "html", "signals", "hooks"] }
+dioxus-ssr = "=0.8.0-alpha.2"
+dioxus-web = { version = "=0.8.0-alpha.2", default-features = false, features = ["mounted"] }
+# The questions, without the page's bindings.
+historica-view = { path = "..", default-features = false }
+historica-hub-app = { path = "app" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1

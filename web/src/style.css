@@ -175,3 +175,60 @@ summary a { font-family: -apple-system, sans-serif; font-size: 11px; margin-left
 .diff.merged .text.shared { color: var(--quiet); }
 .diff.merged .contested { background: color-mix(in srgb, var(--delete) 70%, transparent); }
 .diff.merged .meeting td { font-family: -apple-system, sans-serif; font-size: 12px; color: var(--delete-strong); padding: 4px 8px; background: var(--delete); }
+
+/* Overview: one column, the README at reading width. */
+body[data-view="overview"] main { grid-template-columns: 1fr; }
+body[data-view="overview"] #left { display: none; }
+.page { max-width: 920px; margin: 0 auto; }
+.repository { font-size: 24px !important; margin-top: 8px !important; }
+.description { font-size: 15px; margin: 0 0 8px; }
+.facts { color: var(--quiet); margin: 0 0 12px; }
+.latest-revision { color: var(--quiet); font-size: 13px; }
+.latest-revision a:first-child { font-family: var(--mono); font-size: 12px; }
+.clone { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.command { display: flex; align-items: center; gap: 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); padding: 6px 10px; }
+.command > span { width: 64px; font-size: 12px; }
+.command code { flex: 1; overflow-x: auto; white-space: nowrap; }
+.readme { border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); margin: 16px 0 40px; }
+.readme-name { padding: 8px 14px; border-bottom: 1px solid var(--rule); font-family: var(--mono); font-size: 12px; }
+.readme-name a { text-decoration: none; color: var(--text); }
+.readme .markdown { padding: 8px 28px 24px; }
+
+/* Rendered documents. */
+.markdown { font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; }
+.markdown h1, .markdown h2 { border-bottom: 1px solid var(--rule); padding-bottom: 4px; }
+.markdown h1 { font-size: 26px; }
+#right .markdown h2 { font-size: 20px; margin: 24px 0 10px; }
+.markdown img { max-width: 100%; }
+.markdown pre { line-height: 1.45; background: color-mix(in srgb, var(--rule) 45%, transparent); padding: 10px 12px; border-radius: 6px; overflow-x: auto; }
+.markdown pre code { font-size: 12px; }
+.markdown :not(pre) > code { background: color-mix(in srgb, var(--rule) 60%, transparent); padding: 1px 4px; border-radius: 4px; }
+.markdown table { border-collapse: collapse; }
+.markdown th, .markdown td { border: 1px solid var(--rule); padding: 4px 10px; }
+.markdown blockquote { margin: 0; padding: 0 14px; border-left: 3px solid var(--rule); color: var(--quiet); }
+.markdown a:not([href]) { color: inherit; text-decoration: underline dotted; }
+
+/* Tasks. */
+body[data-view="tasks"] main { grid-template-columns: minmax(320px, 0.8fr) minmax(480px, 1.4fr); }
+.task-states { display: flex; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--rule); position: sticky; top: 0; background: var(--background); }
+.task-states a { padding: 2px 10px; border-radius: 6px; color: var(--quiet); text-decoration: none; font-weight: 500; }
+.task-states a.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text); }
+.taskbox { flex: 1; overflow: auto; }
+.tasks { list-style: none; margin: 0; padding: 0; }
+.tasks li { padding: 8px 12px; border-bottom: 1px solid var(--rule); cursor: pointer; }
+.tasks li:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.tasks li.selected { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.tasks li.empty { cursor: default; }
+.task-title { display: flex; gap: 8px; align-items: baseline; }
+.task-meta { font-size: 12px; margin-top: 2px; padding-left: 2px; }
+.status { font-size: 11px; padding: 0 7px; border-radius: 9px; white-space: nowrap; flex: none; }
+.status.open { background: var(--insert); color: var(--insert-strong); }
+.status.closed { background: color-mix(in srgb, #8250df 16%, transparent); color: #8250df; }
+.status.dropped { background: color-mix(in srgb, var(--quiet) 18%, transparent); color: var(--quiet); }
+.loading { padding: 16px; }
+
+@media (max-width: 760px) {
+  main, body[data-view] main { grid-template-columns: 1fr; }
+  #left { border-right: none; border-bottom: 1px solid var(--rule); max-height: 45vh; }
+  header { flex-wrap: wrap; }
+}

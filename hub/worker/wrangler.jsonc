@@ -1,0 +1,41 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "historica-hub",
+	"main": "build/index.js",
+	"compatibility_date": "2025-09-01",
+	"build": {
+		// worker-build compiles this crate for wasm32 and generates its
+		// bindings; 0.8.7 matches the worker crate it builds.
+		"command": "cargo install -q worker-build --version '=0.8.7' && worker-build --release"
+	},
+	// The browser's half, which `../build.sh` writes into public/client/.
+	// Cloudflare serves a request for one of these before the worker is
+	// asked.
+	"assets": {
+		"directory": "./public"
+	},
+	"r2_buckets": [
+		{
+			// Every repository, under `repos/<slug>/`, as push.sh uploads it.
+			"binding": "HUB",
+			"bucket_name": "historica-hub"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				// One per repository, holding it open in memory.
+				"name": "REPOSITORY",
+				"class_name": "Repository"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["Repository"]
+		}
+	]
+	// Secret: HUB_TOKEN, the bearer token push.sh sends. `wrangler secret put
+	// HUB_TOKEN` for a deployed hub; `.dev.vars` for `wrangler dev`.
+}

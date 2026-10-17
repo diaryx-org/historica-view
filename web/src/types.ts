@@ -108,3 +108,33 @@ export interface FileAt {
   target: string | null;
   held: boolean;
 }
+
+export interface Task {
+  file: string;
+  path: string;
+  title: string;
+  status: string;
+  closed: boolean;
+  created: string | null;
+  updated: string | null;
+  author: string | null;
+  description: string | null;
+}
+
+export interface TaskDetail extends Task {
+  /// Unsanitised: the page sanitises before it shows it.
+  html: string;
+}
+
+export interface Overview {
+  title: string | null;
+  description: string | null;
+  readme: { file: string; path: string; html: string } | null;
+  open_tasks: number;
+  closed_tasks: number;
+}
+
+export interface Listing {
+  header: string;
+  files: { path: string; store: string; digest: string }[];
+}

@@ -15,7 +15,7 @@ const histories = new Map<string, Version[]>();
 const opened = new Set<string>([""]);
 let mode: "content" | "changes" = "content";
 
-function filesAt(app: App, at: string): TreeFile[] {
+export function filesAt(app: App, at: string): TreeFile[] {
   let files = trees.get(at);
   if (!files) {
     files = JSON.parse(app.viewer.files(at)) as TreeFile[];
@@ -180,7 +180,7 @@ function timeline(
   return list;
 }
 
-function imageType(path: string): string | null {
+export function imageType(path: string): string | null {
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
   const types: Record<string, string> = {
     png: "image/png",

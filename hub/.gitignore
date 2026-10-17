@@ -1,0 +1,7 @@
+/target
+/worker/build
+/worker/node_modules
+/worker/.wrangler
+/worker/.dev.vars
+/worker/public/client/historica_hub_client*
+/worker/public/client/snippets
