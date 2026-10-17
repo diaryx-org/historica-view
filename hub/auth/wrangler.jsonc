@@ -11,8 +11,8 @@
 	"preview_urls": false,
 	"vars": {
 		// The hub's own address, which every auth URL and cookie is under.
-		// Set it to the deployed hub's before deploying.
-		"BETTER_AUTH_URL": "http://localhost:8787"
+		// `wrangler dev` reads http://localhost:8787 from .dev.vars instead.
+		"BETTER_AUTH_URL": "https://historica-hub.harrisadam42103.workers.dev"
 	},
 	"d1_databases": [
 		{
@@ -20,7 +20,7 @@
 			// repository; migrations/ creates them.
 			"binding": "DB",
 			"database_name": "historica-hub-auth",
-			"database_id": "00000000-0000-0000-0000-000000000000",
+			"database_id": "e4f16c0c-7f71-4537-a1b2-c76c1a52d04e",
 			"migrations_dir": "migrations"
 		}
 	]
