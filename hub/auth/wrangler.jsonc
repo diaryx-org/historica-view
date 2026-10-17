@@ -1,0 +1,30 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "historica-hub-auth",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-09-01",
+	// better-auth keeps each request's context in AsyncLocalStorage.
+	"compatibility_flags": ["nodejs_compat"],
+	// Reachable only through the hub worker's `AUTH` service binding: no
+	// workers.dev address, no preview URLs, no route.
+	"workers_dev": false,
+	"preview_urls": false,
+	"vars": {
+		// The hub's own address, which every auth URL and cookie is under.
+		// Set it to the deployed hub's before deploying.
+		"BETTER_AUTH_URL": "http://localhost:8787"
+	},
+	"d1_databases": [
+		{
+			// The accounts, sessions and push keys, and who owns each
+			// repository; migrations/ creates them.
+			"binding": "DB",
+			"database_name": "historica-hub-auth",
+			"database_id": "00000000-0000-0000-0000-000000000000",
+			"migrations_dir": "migrations"
+		}
+	]
+	// Secrets: BETTER_AUTH_SECRET, and GITHUB_CLIENT_ID and
+	// GITHUB_CLIENT_SECRET to offer GitHub sign-in. `wrangler secret put` for
+	// a deployed hub; `.dev.vars` for `wrangler dev`.
+}

@@ -5,7 +5,8 @@
 #
 # <repository> is a folder with a store in `history/`; <hub> is the hub's
 # address, as https://hub.example.org or http://localhost:8787. <slug> is the
-# name it is published under, the folder's name unless given.
+# name it is published under, the folder's name unless given. HUB_TOKEN is a
+# push key, made at <hub>/account/; the first push to a slug makes it yours.
 #
 # What goes up is what ../publish.sh makes — the static view, the export, its
 # paged manifest and the git mirror — plus `history.tar`, the export's
@@ -27,7 +28,7 @@ usage() {
 }
 
 [ $# -ge 2 ] && [ $# -le 3 ] || usage
-: "${HUB_TOKEN:?push.sh needs HUB_TOKEN, the hub's token}"
+: "${HUB_TOKEN:?push.sh needs HUB_TOKEN, a push key from the hub's /account/ page}"
 repository=$(cd "$1" && pwd)
 hub=${2%/}
 slug=${3:-$(basename "$repository")}

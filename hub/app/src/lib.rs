@@ -129,6 +129,7 @@ pub fn App() -> Element {
                     a { href: "/{repo.slug}/browse/#files/{repo.head.id}/d/", "Files" }
                 }
             }
+            a { href: "/account/", class: "account", "Account" }
         }
         div { class: "page",
             match page {

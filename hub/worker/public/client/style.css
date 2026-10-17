@@ -106,3 +106,13 @@ button { font: inherit; font-size: 12px; padding: 2px 10px; border: 1px solid va
 .status.open { background: var(--insert); color: var(--insert-strong); }
 .status.closed { background: color-mix(in srgb, #8250df 16%, transparent); color: #8250df; }
 .status.dropped { background: color-mix(in srgb, var(--quiet) 18%, transparent); color: var(--quiet); }
+
+/* Account: signing in, and the push keys. */
+header .account { margin-left: auto; color: var(--quiet); text-decoration: none; }
+header .account:hover { color: var(--text); }
+.account-form { display: grid; gap: 8px; max-width: 360px; margin: 12px 0; }
+.account-form input { font: inherit; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--text); }
+.account-form .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.account-error { color: var(--delete-strong); }
+.listing li.key { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.new-key { padding: 12px; margin: 12px 0; border: 1px solid var(--rule); border-radius: 6px; background: var(--insert); overflow-wrap: anywhere; }

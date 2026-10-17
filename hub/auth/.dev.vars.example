@@ -1,0 +1,4 @@
+# Copy to .dev.vars for `wrangler dev`.
+BETTER_AUTH_SECRET=dev-secret-dev-secret-dev-secret-0
+# GITHUB_CLIENT_ID=
+# GITHUB_CLIENT_SECRET=

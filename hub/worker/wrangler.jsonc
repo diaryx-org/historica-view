@@ -30,12 +30,18 @@
 			}
 		]
 	},
+	"services": [
+		{
+			// The auth worker, ../auth/: better-auth, and whether a push key
+			// may push to a repository.
+			"binding": "AUTH",
+			"service": "historica-hub-auth"
+		}
+	],
 	"migrations": [
 		{
 			"tag": "v1",
 			"new_sqlite_classes": ["Repository"]
 		}
 	]
-	// Secret: HUB_TOKEN, the bearer token push.sh sends. `wrangler secret put
-	// HUB_TOKEN` for a deployed hub; `.dev.vars` for `wrangler dev`.
 }

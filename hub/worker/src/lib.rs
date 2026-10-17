@@ -16,11 +16,18 @@
 //!   nothing in between knows what a revision is, and `/<slug>/browse/` is
 //!   the static view `publish.sh` put beside the copy, for History and Files.
 //! - **Pushes** — `PUT` and `DELETE /api/repos/<slug>/objects?path=…`, with
-//!   the `HUB_TOKEN` secret as a bearer token, which `push.sh` sends.
+//!   a push key as the bearer token, which `push.sh` sends. Each is checked
+//!   with the hub's auth worker, which says whether the key is one and
+//!   whether its owner holds the repository.
+//! - **Accounts** — `/api/auth/*`, passed as it came to the auth worker
+//!   (`../auth/`), which runs better-auth. That worker has no address of its
+//!   own: it is reached through the `AUTH` service binding, so its sign-ins
+//!   and cookies are under the hub's address.
 //!
 //! The browser's half — the script, its wasm, the stylesheet — is the
 //! worker's static assets under `/client/`, which Cloudflare serves before the
-//! worker is asked.
+//! worker is asked, and so is `/account/`, where a reader signs in and makes
+//! push keys.
 
 #![forbid(unsafe_code)]
 
@@ -28,7 +35,8 @@ mod repository;
 
 use dioxus::prelude::*;
 use historica_hub_app::{App, DATA, Listed, PAGE_API, Page, ROOT, embedded};
-use worker::{Env, Method, Request, Response, Result, event};
+use wasm_bindgen::JsValue;
+use worker::{Env, Headers, Method, Request, RequestInit, Response, Result, event};
 
 pub use repository::Repository;
 
@@ -36,6 +44,8 @@ pub use repository::Repository;
 pub(crate) const BUCKET: &str = "HUB";
 /// The Durable Object binding.
 const REPOSITORIES: &str = "REPOSITORY";
+/// The service binding to the auth worker.
+const AUTH: &str = "AUTH";
 /// The archive of a copy's `history/` that `push.sh` uploads beside it.
 pub(crate) const ARCHIVE: &str = "history.tar";
 
@@ -67,6 +77,9 @@ async fn fetch(request: Request, env: Env, _context: worker::Context) -> Result<
             };
             let page = resolve(&env, &wanted, &origin).await?;
             Ok(Response::from_json(&page)?.with_status(status(&page)))
+        }
+        (_, Some("api")) if path.starts_with("/api/auth/") => {
+            env.service(AUTH)?.fetch_request(request).await
         }
         (_, Some("api")) => push(request, &env, &parts).await,
         (Method::Get | Method::Head, _) => get(&env, &path, &parts, &origin).await,
@@ -237,14 +250,15 @@ async fn push(mut request: Request, env: &Env, parts: &[String]) -> Result<Respo
     if !slug_ok(&slug) {
         return Response::error("not a name a repository can have", 400);
     }
-    let token = env.secret("HUB_TOKEN")?.to_string();
-    let given = request
+    let Some(key) = request
         .headers()
         .get("authorization")?
         .and_then(|value| value.strip_prefix("Bearer ").map(str::to_owned))
-        .unwrap_or_default();
-    if token.is_empty() || !same(token.as_bytes(), given.as_bytes()) {
-        return Response::error("a push needs the hub's token", 401);
+    else {
+        return Response::error("a push needs a push key: make one at /account", 401);
+    };
+    if let Some(refused) = authorize(env, &key, &slug).await? {
+        return Ok(refused);
     }
     let url = request.url()?;
     let Some(path) = url
@@ -278,10 +292,28 @@ async fn push(mut request: Request, env: &Env, parts: &[String]) -> Result<Respo
     }
 }
 
-/// Whether two secrets are equal, in time that does not depend on where they
-/// first differ.
-fn same(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+/// Whether `key` may push to `slug`, as the auth worker answers: `None` when
+/// it may, and the refusal to send back when it may not.
+async fn authorize(env: &Env, key: &str, slug: &str) -> Result<Option<Response>> {
+    let headers = Headers::new();
+    headers.set("content-type", "application/json")?;
+    let body = serde_json::json!({ "key": key, "slug": slug }).to_string();
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(JsValue::from_str(&body)));
+    let mut answer = env
+        .service(AUTH)?
+        .fetch("https://auth/internal/push", Some(init))
+        .await?;
+    match answer.status_code() {
+        204 => Ok(None),
+        status @ (400 | 401 | 403) => Response::error(answer.text().await?, status).map(Some),
+        status => {
+            let why = answer.text().await.unwrap_or_default();
+            Response::error(format!("the hub's accounts answered {status}: {why}"), 502).map(Some)
+        }
+    }
 }
 
 /// Whether `slug` can name a repository: a folder name, and not one of the
@@ -290,7 +322,10 @@ fn slug_ok(slug: &str) -> bool {
     !slug.is_empty()
         && slug.len() <= 100
         && !slug.starts_with('.')
-        && !matches!(slug, "api" | "client" | "favicon.ico" | "robots.txt")
+        && !matches!(
+            slug,
+            "account" | "api" | "client" | "favicon.ico" | "robots.txt"
+        )
         && slug
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
