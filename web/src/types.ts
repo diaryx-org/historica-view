@@ -109,6 +109,30 @@ export interface FileAt {
   held: boolean;
 }
 
+export interface Approval {
+  /// The minisign public key that made the claim.
+  key: string;
+  role: string;
+  when: string;
+  /// The one file a claim over one file covers, or null for the whole tip.
+  file: string | null;
+  /// Whether the signature verifies under the key the claim names.
+  verified: boolean;
+  /// Who this copy's own trust takes the key to speak for, if it holds it.
+  who: string | null;
+}
+
+export interface Proposal {
+  /// The bookmark, `changes/<id>`.
+  name: string;
+  title: string;
+  tip: string;
+  /// The revisions the tip reaches and the accepted line does not, newest
+  /// first.
+  revisions: string[];
+  approvals: Approval[];
+}
+
 export interface Task {
   file: string;
   path: string;

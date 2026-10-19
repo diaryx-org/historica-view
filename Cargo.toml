@@ -22,6 +22,10 @@ fig-yaml = { version = "7", default-features = false, features = ["fig"] }
 # what historica published and nothing else. `disk` is off because a browser
 # has no disk; the store is handed its files in memory.
 historica = { version = "1.0.0-rc.8", default-features = false }
+# Claims over a proposal's tip, checked in the page. Verifying only, with no
+# signing. It asks for historica's default features, so `disk` comes back in
+# through it, unused: the page still never touches a disk.
+historica-minisign = { version = "0.2", default-features = false }
 jiff = "0.2"
 # The task tracker, read as prov reads it. Optional, under `prov`: without it
 # the view is a history browser and has no tracker, which is all a store that
@@ -58,3 +62,5 @@ lto = true
 # The tests record a history on disk with the library itself, then read it
 # back through the in-memory folder the page uses.
 historica = { version = "1.0.0-rc.8", features = ["disk"] }
+# And sign claims over it, to check them back.
+historica-minisign = { version = "0.2", default-features = false, features = ["sign"] }

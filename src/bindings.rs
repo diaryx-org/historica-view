@@ -29,8 +29,14 @@ impl Files {
 
     /// Add one file a manifest listed, refusing bytes that are not the ones
     /// it named.
+    ///
+    /// A trust entry is left out whatever the manifest says: whose key is
+    /// whose is the reader's to say, and a published copy is somebody else's.
     #[wasm_bindgen(js_name = addListed)]
     pub fn add_listed(&mut self, path: &str, bytes: Vec<u8>, digest: &str) -> Result<(), JsError> {
+        if path.trim_start_matches('/').starts_with("trust/") {
+            return Ok(());
+        }
         if !verified(&bytes, digest) {
             return Err(JsError::new(&format!(
                 "{path} is not the file the manifest names; the copy has changed since it was listed"
@@ -155,6 +161,11 @@ impl Viewer {
     /// One task with its body, as JSON, or `null`.
     pub fn task(&self, at: &str, file: &str) -> Result<String, JsError> {
         json(&self.view.task(at, file).map_err(fail)?)
+    }
+
+    /// Every open proposal, with the claims over its tip checked, as JSON.
+    pub fn proposals(&self) -> Result<String, JsError> {
+        json(&self.view.proposals().map_err(fail)?)
     }
 
     /// The front page as `at` has it, as JSON.

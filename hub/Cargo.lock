@@ -930,6 +930,15 @@ dependencies = [
 
 [[package]]
 name = "fs-transaction"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79978e566d6e7793c658ea5beb1e584c742dcc35d8eb8f44e91f8327c4fb83cb"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "fs-transaction"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3397fa5de2228e9108c3d125562a07a68dedfc588169168f6badb37dca848c2a"
@@ -1057,6 +1066,7 @@ version = "1.0.0-rc.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae4239d01edee0aaf2c2e4af0c0d7213bdf78b9884ef2d9a5623cda25a87950f"
 dependencies = [
+ "fs-transaction 0.3.0",
  "getrandom 0.4.3",
  "jiff",
  "sha2",
@@ -1110,6 +1120,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "historica-minisign"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0a56e2078109aaaa5d1772623e4eb5ad5af5a16828d4497b78b9f5f920de280"
+dependencies = [
+ "historica",
+ "minisign-verify",
+]
+
+[[package]]
 name = "historica-view"
 version = "0.1.0"
 dependencies = [
@@ -1117,6 +1137,7 @@ dependencies = [
  "fig-yaml",
  "getrandom 0.4.3",
  "historica",
+ "historica-minisign",
  "jiff",
  "prov",
  "pulldown-cmark",
@@ -1527,6 +1548,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
+name = "minisign-verify"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22f9645cb765ea72b8111f36c522475d2daa0d22c957a9826437e97534bc4e9e"
+
+[[package]]
 name = "moid"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1749,7 +1776,7 @@ dependencies = [
  "edtf-normalize",
  "fig",
  "fig-schema",
- "fs-transaction",
+ "fs-transaction 0.4.0",
  "indexmap",
  "prov-config",
  "prov-exports",
@@ -1814,7 +1841,7 @@ dependencies = [
  "fig-json",
  "fig-toml",
  "fig-yaml",
- "fs-transaction",
+ "fs-transaction 0.4.0",
  "indexmap",
  "moid",
  "sha2",
@@ -1831,7 +1858,7 @@ version = "0.18.0"
 source = "git+https://github.com/diaryx-org/prov?branch=main#28269ef548de23783df3bc25531d7123db0c9201"
 dependencies = [
  "fig",
- "fs-transaction",
+ "fs-transaction 0.4.0",
  "prov-graph",
 ]
 
