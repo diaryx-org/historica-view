@@ -9,7 +9,9 @@ export type Route =
   | { view: "overview"; at: string }
   /// `against` is what the revision is compared with: its first parent when
   /// absent, except for a merge, which then shows how its sides met.
-  | { view: "history"; id: string; against?: string }
+  /// `proposal` is a `changes/*` bookmark, shown instead of the revision,
+  /// which is then its tip.
+  | { view: "history"; id: string; against?: string; proposal?: string }
   /// A file is followed by its identifier, so it is the same file at any
   /// revision whatever it was called there; a folder is only ever a path.
   | { view: "files"; at: string; file?: string; folder?: string }
@@ -44,7 +46,10 @@ export function href(route: Route): string {
     if (route.task) return `#tasks/${route.at}/t/${route.task}`;
     return `#tasks/${route.at}${route.closed ? "/closed" : ""}`;
   }
-  if (route.view === "history") return `#history/${route.id}${route.against ? `/vs/${route.against}` : ""}`;
+  if (route.view === "history") {
+    if (route.proposal) return `#history/${route.id}/proposal/${encodeURIComponent(route.proposal)}`;
+    return `#history/${route.id}${route.against ? `/vs/${route.against}` : ""}`;
+  }
   if (route.file) return `#files/${route.at}/f/${route.file}`;
   return `#files/${route.at}/d/${encodeURI(route.folder ?? "")}`;
 }
@@ -52,6 +57,7 @@ export function href(route: Route): string {
 export function parse(hash: string): Route | null {
   const parts = hash.replace(/^#/, "").split("/");
   if (parts[0] === "history" && parts[1]) {
+    if (parts[2] === "proposal" && parts[3]) return { view: "history", id: parts[1], proposal: decodeURIComponent(parts[3]) };
     return parts[2] === "vs" && parts[3] ? { view: "history", id: parts[1], against: parts[3] } : { view: "history", id: parts[1] };
   }
   if (parts[0] === "overview" && parts[1]) return { view: "overview", at: parts[1] };

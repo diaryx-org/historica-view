@@ -49,24 +49,24 @@ fn write(base: &Path, path: &str, text: &str) {
 }
 
 /// A prov workspace as the tasks preset lays one out: an index titled
-/// `Tasks`, two open tasks, a closed one on the shelf, and a document with a
-/// status that is not under `Tasks` at all.
+/// `Tasks` in the README's contents, two open tasks, a closed one on the
+/// shelf, and a document with a status that is not under `Tasks` at all.
 fn workspace(base: &Path) -> [RevisionId; 2] {
     let mut store = Store::init(base.join("history")).expect("a store");
     write(
         base,
         "README.md",
-        "---\ntitle: Example\ndescription: A repository with a tracker\n---\n# Example\n\nSee [the tasks](docs/tasks/tasks.md).\n",
+        "---\ntitle: Example\ndescription: A repository with a tracker\ncontents:\n- '[Tasks](/docs/tasks/tasks.md)'\n- '[Proposals](/docs/proposals/proposals.md)'\n---\n# Example\n\nSee [the tasks](docs/tasks/tasks.md).\n",
     );
     write(
         base,
         "docs/tasks/tasks.md",
-        "---\ntitle: Tasks\ncontents:\n- '[Closed tasks](/docs/tasks/closed/closed.md)'\n---\n# Tasks\n",
+        "---\ntitle: Tasks\npart_of: '[Example](/README.md)'\ncontents:\n- '[Closed tasks](/docs/tasks/closed/closed.md)'\n- '[a merge agrees by text](/docs/tasks/a-merge-agrees-by-text.md)'\n- '[a listing ending in a carriage return](listing-ends-in-cr.md)'\n---\n# Tasks\n",
     );
     write(
         base,
         "docs/tasks/closed/closed.md",
-        "---\ntitle: Closed tasks\npart_of: '[Tasks](/docs/tasks/tasks.md)'\n---\n# Closed tasks\n",
+        "---\ntitle: Closed tasks\npart_of: '[Tasks](/docs/tasks/tasks.md)'\ncontents:\n- '[an export restates its indexes whole](/docs/tasks/closed/export-restates-indexes.md)'\n---\n# Closed tasks\n",
     );
     write(
         base,
@@ -85,8 +85,13 @@ fn workspace(base: &Path) -> [RevisionId; 2] {
     );
     write(
         base,
+        "docs/proposals/proposals.md",
+        "---\ntitle: Proposals\npart_of: '[Example](/README.md)'\ncontents:\n- '[Bytes held elsewhere](/docs/proposals/bytes-held-elsewhere.md)'\n---\n# Proposals\n",
+    );
+    write(
+        base,
         "docs/proposals/bytes-held-elsewhere.md",
-        "---\ntitle: Bytes held elsewhere\nstatus: implemented\n---\n# Not a task\n",
+        "---\ntitle: Bytes held elsewhere\npart_of: '[Proposals](/docs/proposals/proposals.md)'\nstatus: implemented\n---\n# Not a task\n",
     );
     let first = record_folder(base, &mut store, "Begin the tracker");
 
@@ -117,6 +122,7 @@ fn into_memory(directory: &Path) -> Memory {
     memory
 }
 
+#[cfg(feature = "prov")]
 #[test]
 fn tasks_are_the_documents_under_tasks_with_a_status() {
     let root = scratch("tasks");
@@ -224,7 +230,30 @@ fn a_published_copy_reads_back_through_its_paged_manifest() {
     let graph = view.graph();
     assert_eq!(graph.revisions.len(), 2);
     assert_eq!(graph.revisions[0].id, second.to_string());
-    assert_eq!(view.tasks(&second.to_string()).unwrap().len(), 3);
+    let tasks = if cfg!(feature = "prov") { 3 } else { 0 };
+    assert_eq!(view.tasks(&second.to_string()).unwrap().len(), tasks);
+}
+
+#[test]
+fn a_folder_that_is_not_a_workspace_has_a_history_and_no_tracker() {
+    let root = scratch("plain");
+    let base = root.join("repo");
+    let mut store = Store::init(base.join("history")).expect("a store");
+    // Documents with statuses, but no root document to find them from.
+    write(&base, "README", "Plain text, and no frontmatter.\n");
+    write(
+        &base,
+        "notes/a.md",
+        "---\ntitle: A note\nstatus: open\npart_of: '[Tasks](tasks.md)'\n---\n# A note\n",
+    );
+    let at = record_folder(&base, &mut store, "Begin").to_string();
+    let view = View::open(into_memory(&base.join("history"))).expect("the store opens");
+
+    assert_eq!(view.graph().revisions.len(), 1);
+    assert_eq!(view.tasks(&at).expect("no tracker"), []);
+    let overview = view.overview(&at).expect("the overview");
+    assert_eq!((overview.open_tasks, overview.closed_tasks), (0, 0));
+    assert_eq!(overview.readme.expect("a README").path, "README");
 }
 
 #[test]

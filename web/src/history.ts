@@ -4,15 +4,49 @@ import { type App, href, type Route } from "./app";
 import { ago, element, error, hunksTable, link, short, title, who } from "./dom";
 import { layout } from "./graph";
 import { mergeView } from "./merge";
-import type { FileChange, NameSummary, RevisionDetail, RevisionSummary } from "./types";
+import type { Approval, FileChange, NameSummary, Proposal, RevisionDetail, RevisionSummary } from "./types";
 
 const ROW = 30;
 const LANE = 16;
 export const PALETTE = ["#4f7cff", "#e5732e", "#2ea36b", "#b44fd8", "#d64545", "#1f9fb0", "#b58a1b"];
 
-let drawn: { list: HTMLElement; items: Map<string, HTMLElement> } | null = null;
+let drawn: { list: HTMLElement; items: Map<string, HTMLElement>; offered: Map<string, HTMLElement> } | null = null;
+let proposed: Proposal[] | null = null;
 
-function graphPane(app: App): { list: HTMLElement; items: Map<string, HTMLElement> } {
+/// Every open proposal, asked for once: the claims are checked when it is.
+function proposals(app: App): Proposal[] {
+  proposed ??= JSON.parse(app.viewer.proposals()) as Proposal[];
+  return proposed;
+}
+
+/// The open proposals, above the graph, each leading to its own page.
+function proposalList(app: App, offered: Map<string, HTMLElement>): HTMLElement | null {
+  const open = proposals(app);
+  if (!open.length) return null;
+  const list = element("ul", { class: "proposals" });
+  for (const proposal of open) {
+    // A claim whose signature does not hold approves nothing.
+    const approvals = proposal.approvals.filter((approval) => approval.verified).length;
+    const item = element(
+      "li",
+      { tabindex: "0" },
+      element("div", { class: "proposal-title" }, element("span", { class: "name" }, proposal.name), element("span", {}, proposal.title)),
+      element(
+        "div",
+        { class: "quiet proposal-meta" },
+        [count(proposal.revisions.length, "revision"), approvals ? count(approvals, "approval") : "no approvals"].join(" · "),
+      ),
+    );
+    item.addEventListener("click", () => app.go({ view: "history", id: proposal.tip, proposal: proposal.name }));
+    offered.set(proposal.name, item);
+    list.append(item);
+  }
+  return element("div", { class: "offered" }, element("h3", {}, count(open.length, "open proposal")), list);
+}
+
+const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+
+function graphPane(app: App): { list: HTMLElement; items: Map<string, HTMLElement>; offered: Map<string, HTMLElement> } {
   if (drawn) return drawn;
   const rows = app.graph.revisions;
   const { columns, edges, width } = layout(rows);
@@ -81,7 +115,15 @@ function graphPane(app: App): { list: HTMLElement; items: Map<string, HTMLElemen
     list.append(item);
   }
 
-  drawn = { list: element("div", { class: "graph" }, svg, list), items };
+  const offered = new Map<string, HTMLElement>();
+  let above: HTMLElement | null = null;
+  try {
+    above = proposalList(app, offered);
+  } catch (failure) {
+    above = error(failure);
+  }
+  const graph = element("div", { class: "graph" }, svg, list);
+  drawn = { list: above ? element("div", {}, above, graph) : graph, items, offered };
   return drawn;
 }
 
@@ -172,6 +214,10 @@ function detail(app: App, revision: RevisionSummary, route: { id: string; agains
   };
   ids(revision.parents.length > 1 ? "parents" : "parent", revision.parents);
   ids("supersedes", revision.supersedes);
+  for (const proposal of proposals(app).filter((proposal) => proposal.revisions.includes(revision.id))) {
+    const open = { view: "history" as const, id: proposal.tip, proposal: proposal.name };
+    facts.append(element("dt", {}, "proposal"), element("dd", {}, link(proposal.title, href(open), () => app.go(open))));
+  }
   const files = { view: "files" as const, at: revision.id, folder: "" };
   facts.append(element("dt", {}, "folder"), element("dd", {}, link("browse the files as they were", href(files), () => app.go(files))));
 
@@ -190,13 +236,86 @@ function detail(app: App, revision: RevisionSummary, route: { id: string; agains
   ];
 }
 
+/// One claim over a proposal's tip: who or which key, in what role, and
+/// whether its signature holds.
+function approval(item: Approval): HTMLElement {
+  const by = item.who
+    ? [element("span", {}, item.who), " ", element("code", { class: "quiet" }, item.key)]
+    : [element("code", {}, item.key), " ", element("span", { class: "quiet" }, "(not a key this copy's trust holds)")];
+  return element(
+    "li",
+    {},
+    element("span", { class: `status ${item.verified ? "verified" : "refused"}` }, item.verified ? "signature verifies" : "signature does not verify"),
+    element(
+      "div",
+      {},
+      element("div", {}, `${item.verified ? "Approved" : "Claims approval"} as ${item.role} by `, ...by),
+      element("div", { class: "quiet" }, item.file ? `over ${item.file} alone, ${item.when}` : item.when),
+    ),
+  );
+}
+
+function proposalDetail(app: App, proposal: Proposal): HTMLElement[] {
+  const to = (id: string) => link(short(id), href({ view: "history", id }), () => app.go({ view: "history", id }));
+  const facts = element(
+    "dl",
+    {},
+    element("dt", {}, "bookmark"),
+    element("dd", {}, element("code", {}, proposal.name)),
+    element("dt", {}, "tip"),
+    element("dd", {}, to(proposal.tip)),
+  );
+  const approvals = proposal.approvals.length
+    ? element("ul", { class: "approvals" }, ...proposal.approvals.map(approval))
+    : element("p", { class: "quiet" }, "Nobody has signed a claim over the tip.");
+  const revisions = element("ul", { class: "timeline" });
+  for (const id of proposal.revisions) {
+    const revision = app.byId.get(id);
+    const item = element(
+      "li",
+      {},
+      element("span", { class: "dot" }),
+      element("code", { class: "id" }, short(id)),
+      element("span", { class: "title" }, title(revision?.message ?? "")),
+      element("span", { class: "author" }, who(revision?.author ?? "")),
+      ...(revision ? [element("time", { datetime: revision.when, title: revision.when }, ago(revision.epoch))] : []),
+    );
+    item.addEventListener("click", () => app.go({ view: "history", id }));
+    revisions.append(item);
+  }
+  return [
+    element("h2", {}, proposal.title),
+    element("p", { class: "quiet" }, "A proposal: a shared bookmark under changes/ that the accepted line does not reach yet."),
+    facts,
+    element("h3", {}, "Approvals"),
+    approvals,
+    element(
+      "p",
+      { class: "quiet small" },
+      "Each claim is a historica-minisign claim over the tip, its signature checked here. Who a key speaks for comes only from the trust this copy of the store keeps, never from the copy itself.",
+    ),
+    element("h3", {}, `${count(proposal.revisions.length, "revision")} not on the accepted line`),
+    revisions,
+  ];
+}
+
 export function showHistory(app: App, route: Extract<Route, { view: "history" }>) {
   const id = route.id;
   const revision = app.byId.get(id);
-  const { list, items } = graphPane(app);
+  const { list, items, offered } = graphPane(app);
   if (app.left.firstChild !== list) app.left.replaceChildren(list);
-  for (const [other, item] of items) item.classList.toggle("selected", other === id);
+  const proposal = route.proposal ? proposals(app).find((open) => open.name === route.proposal) : undefined;
+  const marked = new Set(proposal ? proposal.revisions : []);
+  for (const [other, item] of items) {
+    item.classList.toggle("selected", proposal ? marked.has(other) : other === id);
+  }
+  for (const [name, item] of offered) item.classList.toggle("selected", name === route.proposal);
   items.get(id)?.scrollIntoView({ block: "nearest" });
+  if (route.proposal) {
+    app.right.replaceChildren(...(proposal ? proposalDetail(app, proposal) : [error(`no open proposal ${route.proposal}`)]));
+    app.right.scrollTop = 0;
+    return;
+  }
   if (!revision) {
     app.right.replaceChildren(error(`no revision ${id}`));
     return;

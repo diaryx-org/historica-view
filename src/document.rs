@@ -63,15 +63,6 @@ impl Document {
         scalar(self.meta.as_ref()?.get(key)?)
     }
 
-    /// Whether the frontmatter has `key` at all, with a value that is not
-    /// null: prov's `present()`.
-    pub fn present(&self, key: &str) -> bool {
-        self.meta
-            .as_ref()
-            .and_then(|meta| meta.get(key))
-            .is_some_and(|value| !matches!(value, fig::Value::Null))
-    }
-
     /// The body, as HTML.
     pub fn html(&self) -> String {
         render(&self.body)
@@ -107,72 +98,6 @@ pub fn render(markdown: &str) -> String {
     out
 }
 
-/// What a link between documents names.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Target {
-    /// A path from the workspace's root.
-    Path(String),
-    /// A document by its `id` field.
-    Id(String),
-    /// A document by its `title` field.
-    Title(String),
-}
-
-/// What a link in a field like `part_of` names, read against the document
-/// at `from`.
-///
-/// prov writes a link to another document as `[Title](/path.md)`, rooted at
-/// the workspace, or relative to the document that holds it, and accepts
-/// `[Title](id:…)`, a bare `id:…` and a wiki link `[[Title]]` besides. A URL
-/// names nothing in the workspace, and is `None`.
-pub fn link_target(field: &str, from: &str) -> Option<Target> {
-    let field = field.trim();
-    if let Some(title) = field
-        .strip_prefix("[[")
-        .and_then(|rest| rest.strip_suffix("]]"))
-    {
-        let title = title.split('|').next().unwrap_or(title).trim();
-        return Some(Target::Title(title.to_owned()));
-    }
-    let href = match field.strip_prefix('[') {
-        Some(inner) => {
-            let (_, rest) = inner.split_once("](")?;
-            rest.strip_suffix(')')?.trim()
-        }
-        None => field,
-    };
-    let href = href.split('#').next().unwrap_or(href);
-    if let Some(id) = href.strip_prefix("id:") {
-        return Some(Target::Id(id.to_owned()));
-    }
-    if href.is_empty() || href.contains(':') {
-        return None;
-    }
-    let decoded = href.replace("%20", " ");
-    Some(Target::Path(match decoded.strip_prefix('/') {
-        Some(rooted) => normal(rooted),
-        None => {
-            let directory = from.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("");
-            normal(&format!("{directory}/{decoded}"))
-        }
-    }))
-}
-
-/// A path with its `.` and `..` resolved, and no leading slash.
-fn normal(path: &str) -> String {
-    let mut parts: Vec<&str> = Vec::new();
-    for part in path.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            part => parts.push(part),
-        }
-    }
-    parts.join("/")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,7 +107,7 @@ mod tests {
         let document = Document::read("---\ntitle: A task\nstatus: open\n---\n# A task\n\nBody.\n");
         assert_eq!(document.field("title").as_deref(), Some("A task"));
         assert_eq!(document.field("status").as_deref(), Some("open"));
-        assert!(!document.present("author"));
+        assert_eq!(document.field("author"), None);
         assert_eq!(document.body, "# A task\n\nBody.\n");
     }
 
@@ -209,27 +134,5 @@ mod tests {
         let html = render("| a |\n|---|\n| b |\n\n- [x] done\n");
         assert!(html.contains("<table>"), "{html}");
         assert!(html.contains("checkbox"), "{html}");
-    }
-
-    #[test]
-    fn links_resolve_from_the_root_or_the_document() {
-        let path = |text: &str| Some(Target::Path(text.to_owned()));
-        assert_eq!(
-            link_target("[Tasks](/docs/tasks/tasks.md)", "x.md"),
-            path("docs/tasks/tasks.md")
-        );
-        assert_eq!(
-            link_target("[Tasks](../tasks.md)", "docs/tasks/closed/closed.md"),
-            path("docs/tasks/tasks.md")
-        );
-        assert_eq!(
-            link_target("[Tasks](id:abc)", "x.md"),
-            Some(Target::Id("abc".into()))
-        );
-        assert_eq!(
-            link_target("[[Tasks]]", "x.md"),
-            Some(Target::Title("Tasks".into()))
-        );
-        assert_eq!(link_target("[Site](https://example.com)", "x.md"), None);
     }
 }
