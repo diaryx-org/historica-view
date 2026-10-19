@@ -11,10 +11,14 @@ repository, and the page a published one is read through.
   through its moves, and picking one moves the whole folder to that moment.
 - **History** is the revision graph with its heads and bookmarks, and what
   each revision did to each file.
-- **Tasks** is the repository's tracker, kept as prov's tasks preset keeps it:
-  every Markdown document under an index titled `Tasks` with a `status`, open
-  unless it is `done` or `dropped`. A task is a file, so the tracker at any
-  revision is the tracker as it stood then, and a task's history is its file's.
+- **Tasks** is the repository's tracker, read by
+  [prov](https://github.com/diaryx-org/prov) as its tasks preset keeps it:
+  every document prov reaches under an index titled `Tasks` with a `status`,
+  open unless it is `done` or `dropped`. A task is a file, so the tracker at
+  any revision is the tracker as it stood then, and a task's history is its
+  file's. A store whose folder is not a prov workspace has no tracker, and
+  everything else works as before; building without the `prov` feature, on
+  by default, leaves prov out of the page altogether.
 
 The `historica` library runs in the page, compiled to WebAssembly. The page
 fetches the store's files, hands them to the library in memory, and asks it
@@ -75,7 +79,7 @@ it open. It is a spike, in a workspace of its own.
 | `src/memory.rs` | a read-only `Filesystem` over files held in memory |
 | `src/view.rs` | the questions the page asks, answered natively and tested with `cargo test` |
 | `src/published.rs` | a published copy's manifest, whole or paged, and the files it lists |
-| `src/workspace.rs` | the README and the task tracker, at a revision |
+| `src/workspace.rs` | the README, and the task tracker prov reads, at a revision |
 | `src/document.rs` | frontmatter, links between documents, and Markdown rendered to HTML |
 | `src/lib.rs` | those answers, spelled as JSON for the page |
 | `web/vite.config.ts` | the dev server that hands the page one local store |

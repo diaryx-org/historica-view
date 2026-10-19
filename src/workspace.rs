@@ -5,35 +5,32 @@
 //! Markdown document with a `status` field, placed in the tree by a `part_of`
 //! link that reaches an index titled `Tasks`; closing one is an edit to its
 //! status, and the file moves to a `closed/` shelf that is itself part of
-//! `Tasks`. So the tracker is read here exactly as prov's `open-tasks` view
-//! reads it — `under('Tasks') && present(status)` — at whichever revision the
-//! page is looking at, which makes the tracker's own history the store's.
+//! `Tasks`. So the tracker is prov's to read: the folder as a revision has it
+//! is handed to prov in memory, prov finds the workspace's root and walks its
+//! spine, and the tracker is what prov's `open-tasks` view starts from,
+//! `under('Tasks') && present(status)`. Which revision that is is the page's
+//! choice, which makes the tracker's own history the store's.
 //!
 //! Which statuses count as closed is prov's task vocabulary, `done` and
 //! `dropped`, which the org's repositories fix so that one tool can read every
 //! repository's tasks. A workspace that declares a vocabulary of its own is
 //! not consulted: prov has no way yet to say which of a vocabulary's terms are
-//! closed, and its proposal for one (`states:`) is still a draft.
-
-use std::collections::{BTreeMap, BTreeSet};
+//! closed, and its proposal for one (term states) is still a draft. When prov
+//! can say it, [`CLOSED`] is what it replaces.
+//!
+//! Without the `prov` feature, or for a store whose folder is not a prov
+//! workspace, there is no tracker, and the rest of the view is unchanged.
 
 use historica::core::{FileId, RevisionId};
 use historica::store::Content;
 use historica::tree::Kind;
 use serde::{Deserialize, Serialize};
 
-use crate::document::{Document, Target, link_target, render};
+use crate::document::{Document, render};
 use crate::view::{Failure, View};
-
-/// The title of the index every task is part of.
-const TASKS: &str = "Tasks";
 
 /// Statuses that mean a task is finished, from prov's task vocabulary.
 const CLOSED: [&str; 2] = ["done", "dropped"];
-
-/// How far a `part_of` chain is followed before it is taken to be a loop
-/// that the visited set somehow missed.
-const DEPTH: usize = 64;
 
 /// One task, as the list shows it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -79,78 +76,35 @@ pub struct Readme {
     pub html: String,
 }
 
-/// Every Markdown document in a folder, read once.
-struct Documents {
-    by_path: BTreeMap<String, (FileId, Document)>,
-}
+/// What prov's `open-tasks` view starts from, before it leaves out the
+/// closed: every document under `Tasks` that states a status. A `Closed
+/// tasks` shelf filed under `Tasks` says no status, and is not a task.
+#[cfg(feature = "prov")]
+const TRACKER: &str = "under('Tasks') && present(status)";
 
-impl Documents {
-    fn find(&self, target: &Target) -> Option<(&str, &Document)> {
-        let found = match target {
-            Target::Path(path) => self.by_path.get_key_value(path),
-            Target::Id(id) => self
-                .by_path
-                .iter()
-                .find(|(_, (_, document))| document.field("id").as_deref() == Some(id)),
-            Target::Title(title) => self
-                .by_path
-                .iter()
-                .find(|(_, (_, document))| document.field("title").as_deref() == Some(title)),
-        };
-        found.map(|(path, (_, document))| (path.as_str(), document))
-    }
+/// Where the folder is put for prov, which wants an absolute root.
+#[cfg(feature = "prov")]
+const MOUNT: &str = "/workspace";
 
-    /// Whether the document at `path` is part of a document titled `title`,
-    /// directly or through others: prov's `under()`.
-    fn under(&self, path: &str, title: &str) -> bool {
-        let mut seen = BTreeSet::new();
-        let mut frontier = vec![path.to_owned()];
-        for _ in 0..DEPTH {
-            let mut next = Vec::new();
-            for at in frontier {
-                if !seen.insert(at.clone()) {
-                    continue;
-                }
-                let Some((_, document)) = self.by_path.get(&at) else {
-                    continue;
-                };
-                for link in part_of(document) {
-                    let Some(target) = link_target(&link, &at) else {
-                        continue;
-                    };
-                    if let Target::Title(named) = &target
-                        && named == title
-                    {
-                        return true;
-                    }
-                    let Some((found, parent)) = self.find(&target) else {
-                        continue;
-                    };
-                    if parent.field("title").as_deref() == Some(title) {
-                        return true;
-                    }
-                    next.push(found.to_owned());
-                }
-            }
-            if next.is_empty() {
-                return false;
-            }
-            frontier = next;
-        }
-        false
-    }
-}
-
-/// A document's `part_of`, which prov writes as one link or a list of them.
-fn part_of(document: &Document) -> Vec<String> {
-    match document.meta.as_ref().and_then(|meta| meta.get("part_of")) {
-        Some(fig::Value::Str(link)) => vec![link.clone()],
-        Some(fig::Value::Seq(links)) => links
-            .iter()
-            .filter_map(|link| link.as_str().map(str::to_owned))
-            .collect(),
-        _ => Vec::new(),
-    }
+/// Whether prov might read the file at `path` to find the workspace and walk
+/// it: its documents, and the configuration and vocabularies beside them.
+/// Anything else stays in the store, unread.
+#[cfg(feature = "prov")]
+fn prov_reads(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    [
+        ".md",
+        ".markdown",
+        ".dj",
+        ".djot",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".toml",
+        ".figl",
+    ]
+    .iter()
+    .any(|extension| lower.ends_with(extension))
 }
 
 fn is_markdown(path: &str) -> bool {
@@ -168,15 +122,7 @@ impl View {
     /// first.
     pub fn tasks(&self, at: &str) -> Result<Vec<Task>, Failure> {
         let at: RevisionId = at.parse().map_err(|error| Failure(format!("{error}")))?;
-        let documents = self.documents(at)?;
-        let mut tasks: Vec<Task> = documents
-            .by_path
-            .iter()
-            .filter(|(path, (_, document))| {
-                document.present("status") && documents.under(path, TASKS)
-            })
-            .map(|(path, (file, document))| task(path, file, document))
-            .collect();
+        let mut tasks = self.tracker(at)?;
         tasks.sort_by(|a, b| {
             a.closed
                 .cmp(&b.closed)
@@ -198,7 +144,7 @@ impl View {
         let file: FileId = file.parse().map_err(|error| Failure(format!("{error}")))?;
         let document = Document::read(&text);
         Ok(Some(TaskDetail {
-            task: task(&shown.path, &file, &document),
+            task: task(&shown.path, &file, |key| document.field(key)),
             html: document.html(),
         }))
     }
@@ -206,7 +152,9 @@ impl View {
     /// The front page as `at` has it: the root document's title, the
     /// README, and how many tasks are open.
     pub fn overview(&self, at: &str) -> Result<Overview, Failure> {
-        let tasks = self.tasks(at)?;
+        // A tracker prov cannot read does not take the README down with it;
+        // the Tasks view is where it says why.
+        let tasks = self.tasks(at).unwrap_or_default();
         let at: RevisionId = at.parse().map_err(|error| Failure(format!("{error}")))?;
         let tree = self
             .store()
@@ -247,21 +195,71 @@ impl View {
         })
     }
 
-    fn documents(&self, at: RevisionId) -> Result<Documents, Failure> {
+    /// Every task `at` has, unsorted: what prov's census of the workspace
+    /// reaches under `Tasks` with a status. A folder that is not a prov
+    /// workspace has none.
+    #[cfg(feature = "prov")]
+    fn tracker(&self, at: RevisionId) -> Result<Vec<Task>, Failure> {
+        use std::collections::BTreeMap;
+        use std::path::{Path, PathBuf};
+
+        use prov::discovery::{Discovery, discover};
+        use prov::title::title_text;
+        use prov::views::{Expression, ViewSpec, documents, narrow};
+
+        fn fail(error: impl std::fmt::Display) -> Failure {
+            Failure(format!("prov: {error}"))
+        }
         let tree = self
             .store()
             .tree(&at)
             .map_err(|error| Failure(format!("{error}")))?;
-        let mut by_path = BTreeMap::new();
+        let mut files = Vec::new();
+        let mut ids = BTreeMap::new();
         for (file, path) in tree.files() {
-            if !is_markdown(path) {
+            if !prov_reads(path) {
                 continue;
             }
             if let Some(text) = self.lines(&tree, at, file)? {
-                by_path.insert(path.to_owned(), (*file, Document::read(&text)));
+                files.push((Path::new(MOUNT).join(path), text));
+                ids.insert(PathBuf::from(path), *file);
             }
         }
-        Ok(Documents { by_path })
+        let fs = prov::InMemoryFs::with_files(files);
+        let spec = ViewSpec {
+            filter: Some(Expression::parse(TRACKER).expect("the tracker's condition parses")),
+            ..ViewSpec::new("tasks", Expression::parse("status").expect("a key"))
+        };
+        prov::block_on(async {
+            let Discovery::Found(found) = discover(&fs, Path::new(MOUNT)).await.map_err(fail)?
+            else {
+                return Ok(Vec::new());
+            };
+            let workspace = prov::crossing::open_discovered(&fs, &found)
+                .await
+                .map_err(fail)?;
+            let rows = documents(workspace.graph(), &found.root_doc)
+                .await
+                .map_err(fail)?;
+            let base = found.root_dir.strip_prefix(MOUNT).unwrap_or(Path::new(""));
+            Ok(narrow("tasks", &spec, rows)
+                .rows
+                .into_iter()
+                .filter_map(|row| {
+                    let path = base.join(&row.path);
+                    let file = ids.get(&path)?;
+                    Some(task(&path.to_string_lossy(), file, |key| {
+                        row.meta.get(key).and_then(title_text)
+                    }))
+                })
+                .collect())
+        })
+    }
+
+    /// Without prov there is no tracker to read.
+    #[cfg(not(feature = "prov"))]
+    fn tracker(&self, _: RevisionId) -> Result<Vec<Task>, Failure> {
+        Ok(Vec::new())
     }
 
     /// A file of lines' text, or `None` for bytes and links.
@@ -290,19 +288,18 @@ impl View {
     }
 }
 
-fn task(path: &str, file: &FileId, document: &Document) -> Task {
-    let status = document.field("status").unwrap_or_default();
+/// A task as the list shows it, from the fields `field` reads.
+fn task(path: &str, file: &FileId, field: impl Fn(&str) -> Option<String>) -> Task {
+    let status = field("status").unwrap_or_default();
     Task {
         file: file.to_string(),
         path: path.to_owned(),
-        title: document
-            .field("title")
-            .unwrap_or_else(|| stem(path).replace('-', " ")),
+        title: field("title").unwrap_or_else(|| stem(path).replace('-', " ")),
         closed: CLOSED.contains(&status.as_str()),
         status,
-        created: document.field("created"),
-        updated: document.field("updated"),
-        author: document.field("author"),
-        description: document.field("description"),
+        created: field("created"),
+        updated: field("updated"),
+        author: field("author"),
+        description: field("description"),
     }
 }

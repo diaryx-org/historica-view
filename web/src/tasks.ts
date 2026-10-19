@@ -67,7 +67,7 @@ function detail(app: App, route: Route & { view: "tasks" }, tasks: Task[]): HTML
       element(
         "p",
         { class: "quiet" },
-        "Every document under an index titled Tasks with a status, as prov's tasks preset lays them out. ",
+        "Every document prov reaches under an index titled Tasks with a status, as its tasks preset lays them out. ",
         "Closing one is an edit to its status, so the tracker at any revision is the tracker as it stood then.",
       ),
     ];
