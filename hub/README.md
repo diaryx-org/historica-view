@@ -2,34 +2,35 @@
 
 A forge for Historica repositories on Cloudflare: a worker that renders each
 repository's front page with Dioxus, a Dioxus client that takes the page over
-in the browser, R2 holding every repository as `../publish.sh` lays one out,
-a Durable Object per repository holding it open in memory, and a second
-worker running better-auth for accounts and push keys.
+in the browser, R2 holding every file pushed once by its digest, a Durable
+Object per repository holding it open in memory, D1 saying who owns and who
+may read each repository, and a second worker running better-auth for
+accounts, handles and push keys.
 
-A spike, kept apart from the page in its own workspace so it can be taken out
-whole.
+Kept apart from the page in its own workspace so it can be taken out whole.
 
 ## How it fits together
 
 ```
- push.sh ──PUT──▶ worker ──▶ R2  repos/<slug>/  index.html, assets/      the static view
-                                                 <slug>/                  historica export
-                                                 offer.txt, offer-pages/  the paged manifest
-                                                 <slug>.git/              the git mirror
-                                                 history.tar              <slug>/history, archived
+ push.sh ──PUT──▶ worker ──▶ R2  blobs/sha256/<digest>   every file, once, whoever pushed it
+                                 repos/<id>/offer.txt     a repository's manifest
+                                 repos/<id>/site.txt      its site listing: <digest> <path>
 
- browser ──GET /<slug>──▶ worker ──▶ Repository (Durable Object, one per slug)
-                            │          opens the store from offer.txt + history.tar,
-                            │          every file checked against the manifest's digest,
-                            │          and keeps it open until the manifest moves
-                            ▼
+ browser ──GET /<owner>/<slug>──▶ worker ──gate──▶ Repository (Durable Object, one per repository)
+                                    │        reads the manifest, its pages and the site
+                                    │        listing, opens the store from history.tar,
+                                    │        every file checked against the manifest's
+                                    │        digest, and keeps it open until the
+                                    │        manifest moves
+                                    ▼
                  dioxus-ssr renders the page, with its data as JSON beside it;
                  the client renders the same components from that data, and
                  every link after is GET /api/page?path=… rather than a load
 
  browser ──/api/auth/*──▶ worker ──AUTH──▶ auth worker (better-auth, D1)
- push.sh ──PUT──▶ worker ──AUTH──▶ POST /internal/push: is this a push key,
-                                   and does its owner hold <slug>?
+ push.sh ──PUT──▶ worker ──AUTH──▶ POST /internal/key: whose push key is this?
+                    └──DB──▶ D1: who owns <owner>/<slug>, who may read it,
+                                 and which digests it holds
 ```
 
 - **`app/`** is the pages: one set of Dioxus components, rendered by the
@@ -37,26 +38,121 @@ whole.
   fetching the next page's data, the history buttons, the copy buttons.
 - **`client/`** is the browser's entry point, built to
   `worker/public/client/` by `build.sh`.
-- **`worker/`** is the worker: pages, the files of the bucket as stored, and
-  the push API. `public/account/` is the page where a reader signs in and
-  makes push keys.
+- **`worker/`** is the worker: pages, files, the read gate, and the API for
+  pushes, forks and members. `public/account/` is the page where a reader
+  signs in, chooses a handle, and makes push keys.
 - **`auth/`** is the auth worker: better-auth over D1, with email and
-  password sign-in, GitHub when the hub has an OAuth app, and the `apiKey`
-  plugin for push keys. It has no address of its own. The hub's worker
-  passes `/api/auth/*` to it through the `AUTH` service binding, so its
-  cookies are the hub's, and asks it about every object a push sends. A
-  repository belongs to whoever first pushed to its slug, in D1's
-  `repository` table.
+  password sign-in, GitHub when the hub has an OAuth app, the `username`
+  plugin for handles, and the `apiKey` plugin for push keys. It has no
+  address of its own. The hub's worker passes `/api/auth/*` to it through the
+  `AUTH` service binding, so its cookies are the hub's, and asks it whose
+  push key a push sends. The hub's worker binds the same D1 database for its
+  own tables.
 
-  `migrations/0001_accounts.sql` is better-auth's tables, as
-  `src/auth.ts` configures it, printed by `node scripts/schema.ts` (Node 24
-  or newer); regenerate it rather than edit it, as a new migration once
-  there is a deployed database.
+  `migrations/0001_accounts.sql` is better-auth's tables as they were first
+  deployed, printed by `node scripts/schema.ts` (Node 24 or newer).
+  `0002` was the spike's `/<slug>` ownership, and `0003_owners.sql` drops it
+  and adds handles, repositories, members and holdings. A change to
+  `src/auth.ts` that changes better-auth's tables is a new migration, written
+  against what `scripts/schema.ts` prints.
 
-Everything under `/<slug>/` that is not a page is the bucket's file, so
-`historica fetch <hub>/<slug>/offer.txt` and `git clone <hub>/<slug>.git`
-read R2 through the worker, and `/<slug>/browse/` is the static view for
-History and Files.
+## Owners
+
+A repository is `/<owner>/<slug>`. The owner is an account's handle: 1 to 39
+lowercase letters, digits and inner hyphens, unique on the hub, and not
+`account`, `api` or `client`. An account chooses its handle at `/account/`,
+and needs one to push or fork. The slug is unique among the owner's
+repositories, so two accounts can each have a `notes`.
+
+Nobody writes to a repository they do not own. The first push to
+`/<me>/<slug>` makes it, and only its owner's keys push to it after. A
+contribution is a fork, which is the contributor's own.
+
+| | |
+|---|---|
+| `/<owner>/<slug>` | the front page |
+| `/<owner>/<slug>/offer.txt` | the manifest: `historica fetch` it |
+| `/<owner>/<slug>/<path>` | a file of the site: a page of the manifest, a file of the export |
+| `/<owner>/<slug>/browse/` | the static view, for History and Files |
+| `/<owner>/<slug>/raw/<path>` | a file of the exported folder, as a README links to it |
+| `/<owner>/<slug>.git` | the git mirror: `git clone` it |
+| `/api/repos/<owner>/<slug>` | `PUT`: make it, or make it private or public |
+| `…/blobs/<digest>`, `…/site`, `…/offer` | `PUT`: a push, in that order |
+| `…/fork` | `POST`: fork it, as `{"slug": …}` or by the same name |
+| `…/members`, `…/members/<handle>` | `GET`, and `PUT` or `DELETE` one |
+
+The spike's `/<slug>` addresses are gone, not moved.
+
+## One copy of every file
+
+R2 keeps each file once, under its SHA-256 digest, and a path is not a key in
+the bucket. Each repository has two listings of its own:
+
+- **the manifest**, `offer.txt`, and its pages, which name every file of the
+  copy `historica fetch` takes by the digest it is checked against;
+- **the site listing**, `site.txt`, which names the rest of what
+  `publish.sh` lays out: the static view, the git mirror, the store's
+  `historica.txt`, the exported folder, and `history.tar`.
+
+`/<owner>/<slug>/<path>` is the blob that repository's own listings name at
+`<path>`, and a path neither names is a `404`, whatever the bucket holds. So a
+fork costs its two listings and what it changes after.
+
+A listing may name only digests its repository *holds*: ones whose bytes
+were pushed to it, hashed by the worker against the digest they were sent
+as, or that it was forked with. The hub never skips bytes because it has
+them already, and no answer says whether it had them, so nobody learns by
+pushing whether a file is in someone else's repository. The worker's
+`push.rs` has the argument in full.
+
+When a manifest is taken, the repository stops holding what its listings no
+longer name, and a blob no repository holds is deleted: a `forget` at the
+origin destroys the bytes on the hub too, unless a fork still serves them.
+
+## Forks
+
+`POST /api/repos/<owner>/<slug>/fork`, signed in or with a push key, makes
+`/<me>/<slug>`, or `/<me>/<name>` for `{"slug": "<name>"}`. It copies the two
+listings and holds what they name, and records what it was forked from,
+which its page shows. Nothing else is copied. The fork shares the
+repository's root revision, which is what a remark names a repository by
+(`../src/target.rs`), and its owner pushes to it as to any repository of
+theirs.
+
+## Private repositories
+
+A repository is private when made with `{"private": true}`, as `push.sh`
+does under `HUB_PRIVATE=1`, or when its owner makes it so later. Its members
+are its owner, the accounts the owner adds, and, for a fork, the members of
+what it was forked from. A fork of a private repository is private, and
+cannot be made public while that repository is private.
+
+Every read of a repository goes through one gate in the worker,
+`gate::authorize_read`: pages, page data, files, `offer.txt`, the static
+view and the git mirror. A reader it refuses gets a `404`, the same as for a
+repository that is not there. The gate's answer is the only way to reach a
+repository's Durable Object or its listings, and what a private repository
+serves is `cache-control: private, no-store`, without the
+`access-control-allow-origin: *` a public one has.
+
+Every pushed file — the static view, the export, raw files, the manifest
+and the git mirror — is served with `content-security-policy: sandbox
+allow-scripts allow-popups` and `x-content-type-options: nosniff`. A page
+someone pushed runs in an opaque origin of its own: it cannot read the hub's
+cookies, and what it asks of the hub is a cross-site request, which the
+session cookie (`HttpOnly`, `SameSite=Lax`, set in `auth/src/auth.ts`) is
+not sent with. So a repository's HTML cannot act as its reader. The static
+view reads a public repository's files as any other origin does, by
+`access-control-allow-origin: *`. The hub's own pages, `/client/`,
+`/account/` and `/api/auth/` are not sandboxed.
+
+Today a reader is known by the hub's session cookie alone, so a private
+repository is readable in a member's browser, and not yet by
+`historica fetch` or `git clone`. `gate::reader` is where the other two ways
+go: an `Authorization: Minisign <key-id> <time> <signature>` header from a
+device key registered to the account, and a short-lived token as a Basic
+password for git's credential helper. Both wait on historica-minisign's
+request signing.
 
 ## Why not Dioxus fullstack
 
@@ -89,11 +185,12 @@ npx wrangler dev -c wrangler.jsonc -c ../auth/wrangler.jsonc
 ```
 
 One `wrangler dev` runs both workers, so the service binding between them
-resolves. Make an account and a push key at
-<http://localhost:8787/account/>, and from another shell:
+resolves, and both bind the one local D1 database. Make an account, choose a
+handle and make a push key at <http://localhost:8787/account/>, and from
+another shell:
 
 ```console
-HUB_TOKEN=hub_… ./hub/push.sh ~/some/repo http://localhost:8787
+HUB_TOKEN=hub_… ./hub/push.sh ~/some/repo http://localhost:8787 ada
 ```
 
 Pushing again sends only what changed since the last push, and the
@@ -112,6 +209,8 @@ In `auth/`:
    GitHub sign-in, also `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` from an
    OAuth app whose callback is `<hub>/api/auth/callback/github`.
 4. `npx wrangler d1 migrations apply historica-hub-auth --remote`.
+   `0003_owners.sql` drops the spike's repositories; their files under
+   `repos/<slug>/` in R2 are not read again and can be deleted.
 5. `npm run deploy`.
 
 Then in `worker/`, after `../build.sh`: `npx wrangler r2 bucket create
@@ -119,9 +218,22 @@ historica-hub` the first time, then `npm run deploy`.
 
 ## Not yet
 
-- **Repository settings.** A repository is its first pusher's, for good:
-  there is no handing one over, sharing it, or freeing its name, short of
-  deleting the row in D1.
+- **Reading a private repository without a browser**: the signed requests
+  and tokens above.
+- **An origin of its own for what is pushed.** Pushed files are sandboxed on
+  the hub's address (above); serving them from a separate domain would hold
+  even where a browser ignores the sandbox, and is the stronger fix.
+- **The static view of a private repository.** Sandboxed, it reads the
+  repository's files from an opaque origin, which carries no session, so a
+  private repository's History and Files do not load there. Its front page,
+  rendered by the hub, does.
+- **Repository settings** beyond private and members: handing a repository
+  over, renaming it, deleting it. A handle that is changed is free for
+  another account to take, and with it the old addresses.
+- **A Fork button**, and pages for members and settings: today they are
+  the API alone.
+- **The front page lists public repositories** only, not a member's private
+  ones.
 - **Email verification and password reset.** better-auth has both, once the
   hub can send mail.
 - **Hydration**, once Dioxus's server half builds for a worker, or by writing
@@ -130,5 +242,5 @@ historica-hub` the first time, then `npm run deploy`.
   view: the Durable Object already holds the `View` that answers them.
 - **Large repositories.** The Durable Object holds the whole history, and a
   Durable Object has 128 MB; bytes the pages never read could stay in R2.
-- **Contributions** — historica-remark's `editing` remarks, as proposed
-  changes.
+- **Contributions** — offers, issues and remarks, each in its writer's own
+  chain, beside the forks they point to.

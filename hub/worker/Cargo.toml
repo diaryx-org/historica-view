@@ -1,6 +1,6 @@
 [package]
 name = "historica-hub-worker"
-description = "The hub on Cloudflare: renders pages, serves published copies from R2, takes pushes"
+description = "The hub on Cloudflare: renders pages, serves published copies from R2, takes pushes and forks"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -22,6 +22,8 @@ dioxus-ssr.workspace = true
 historica = { version = "1.0.0-rc.8", default-features = false }
 historica-hub-app.workspace = true
 historica-view.workspace = true
+# A date in D1 as better-auth writes its own.
+js-sys = "0.3"
 serde.workspace = true
 serde_json.workspace = true
 # A repository's history arrives as one archive: a Durable Object loading it
@@ -29,4 +31,5 @@ serde_json.workspace = true
 tar = { version = "0.4", default-features = false }
 # The `durable_object` macro names wasm-bindgen by its own path.
 wasm-bindgen = "0.2"
-worker = "0.8.7"
+# `d1`: the hub's own tables, beside the auth worker's.
+worker = { version = "0.8.7", features = ["d1"] }

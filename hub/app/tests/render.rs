@@ -12,7 +12,10 @@ fn render(page: Page) -> String {
 
 fn repo() -> Repo {
     Repo {
+        owner: "ada".into(),
         slug: "historica".into(),
+        private: false,
+        forked_from: None,
         origin: "https://hub.example.org".into(),
         revisions: 3,
         head: Head {
@@ -29,15 +32,17 @@ fn home_lists_the_repositories() {
     let html = render(Page::Home {
         repositories: vec![
             Listed {
+                owner: "ada".into(),
                 slug: "historica".into(),
             },
             Listed {
-                slug: "prov".into(),
+                owner: "grace".into(),
+                slug: "historica".into(),
             },
         ],
     });
-    assert!(html.contains(r#"href="/historica""#), "{html}");
-    assert!(html.contains(r#"href="/prov""#), "{html}");
+    assert!(html.contains(r#"href="/ada/historica""#), "{html}");
+    assert!(html.contains(r#"href="/grace/historica""#), "{html}");
 }
 
 #[test]
@@ -58,8 +63,13 @@ fn an_overview_has_the_readme_and_both_copy_commands() {
         html.contains("<h1>Historica</h1>"),
         "the README goes in as HTML: {html}"
     );
-    assert!(html.contains("historica fetch https://hub.example.org/historica/offer.txt"));
-    assert!(html.contains("git clone https://hub.example.org/historica.git"));
+    assert!(html.contains("historica fetch https://hub.example.org/ada/historica/offer.txt"));
+    assert!(html.contains("git clone https://hub.example.org/ada/historica.git"));
+    assert!(
+        html.contains(r#"href="/ada/historica/browse/#history/2686b"#),
+        "{html}"
+    );
+    assert!(!html.contains("Private"), "{html}");
     assert!(html.contains("3 revisions"), "{html}");
     assert!(html.contains("2686b27369"), "{html}");
 }
@@ -73,4 +83,24 @@ fn page_data_cannot_close_its_script_element() {
     assert!(!data.contains("</script>"), "{data}");
     let back: Page = serde_json::from_str(&data).expect("still JSON");
     assert_eq!(back, page);
+}
+
+#[test]
+fn a_private_fork_says_so_and_links_its_parent() {
+    let html = render(Page::Overview {
+        repo: Repo {
+            owner: "grace".into(),
+            private: true,
+            forked_from: Some("ada/historica".into()),
+            ..repo()
+        },
+        overview: Overview {
+            title: None,
+            description: None,
+            readme: None,
+        },
+    });
+    assert!(html.contains("Private"), "{html}");
+    assert!(html.contains(r#"href="/ada/historica""#), "{html}");
+    assert!(html.contains("git clone https://hub.example.org/grace/historica.git"));
 }

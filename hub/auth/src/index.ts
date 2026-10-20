@@ -4,13 +4,16 @@
 // workers.dev address, and the hub's worker is the only caller, through its
 // `AUTH` service binding. It answers two things:
 //
-// - `/api/auth/*` — better-auth itself: signing up and in, sessions, and the
-//   push keys a signed-in user makes. The hub's worker passes these through
-//   as they came, so they are under the hub's own address and its cookies
-//   are the hub's.
-// - `POST /internal/push` — whether a push key may push to a repository,
-//   which the hub's worker asks before every object a push sends. It never
-//   passes a request here from outside.
+// - `/api/auth/*` — better-auth itself: signing up and in, sessions, an
+//   account's handle, and the push keys a signed-in user makes. The hub's
+//   worker passes these through as they came, so they are under the hub's
+//   own address and its cookies are the hub's. It also asks
+//   `/api/auth/get-session` itself, with a reader's cookie, to learn whose
+//   it is.
+// - `POST /internal/key` — whose push key a bearer token is, which the hub's
+//   worker asks before every change a push sends. It never passes a request
+//   here from outside. Who owns a repository, and who may read one, the
+//   hub's worker reads in D1 itself.
 
 import { hubAuth } from "./auth";
 
@@ -44,24 +47,21 @@ export default {
     if (url.pathname.startsWith("/api/auth/")) {
       return auth(env).handler(request);
     }
-    if (url.pathname === "/internal/push" && request.method === "POST") {
-      return push(request, env);
+    if (url.pathname === "/internal/key" && request.method === "POST") {
+      return key(request, env);
     }
     return new Response("not here", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
 
 /**
- * Whether `key` may push to `slug`. A repository belongs to whoever first
- * pushed to it, so a slug no one holds is claimed by this push's owner.
- *
- * 204 when it may; 401 when the key is not one, and 403 when it is someone
- * else's repository, each with a reason push.sh can print.
+ * Whose push key `key` is: 200 with the account's id and handle, or 401 when
+ * it is not a push key of this hub.
  */
-async function push(request: Request, env: Env): Promise<Response> {
-  const { key, slug } = await request.json<{ key?: string; slug?: string }>();
-  if (!key || !slug) {
-    return new Response("a key and a slug are wanted", { status: 400 });
+async function key(request: Request, env: Env): Promise<Response> {
+  const { key } = await request.json<{ key?: string }>();
+  if (!key) {
+    return new Response("a key is wanted", { status: 400 });
   }
   const verified = await auth(env).api.verifyApiKey({ body: { key } });
   if (!verified.valid || !verified.key) {
@@ -70,22 +70,13 @@ async function push(request: Request, env: Env): Promise<Response> {
       { status: 401 },
     );
   }
-  const user = verified.key.referenceId;
-  await env.DB.prepare(
-    `insert into "repository" ("slug", "owner", "createdAt") values (?, ?, ?)
-     on conflict ("slug") do nothing`,
+  const account = await env.DB.prepare(
+    `select "id", "username" from "user" where "id" = ?`,
   )
-    .bind(slug, user, new Date().toISOString())
-    .run();
-  const owner = await env.DB.prepare(
-    `select "owner" from "repository" where "slug" = ?`,
-  )
-    .bind(slug)
-    .first<string>("owner");
-  if (owner !== user) {
-    return new Response(`${slug} belongs to someone else on this hub`, {
-      status: 403,
-    });
+    .bind(verified.key.referenceId)
+    .first<{ id: string; username: string | null }>();
+  if (!account) {
+    return new Response("that key's account is gone", { status: 401 });
   }
-  return new Response(null, { status: 204 });
+  return Response.json(account);
 }
