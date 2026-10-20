@@ -7,7 +7,7 @@
 //
 // Links and images that point at files of the repository are read against the
 // document's own path and the folder as `at` has it: a link to another file
-// opens it in Files, a link to a task opens it in Tasks, and an image is shown
+// opens it in Files, and an image is shown
 // from the store's own bytes rather than fetched from wherever the page is.
 
 import DOMPurify from "dompurify";
@@ -30,7 +30,7 @@ function resolve(reference: string, from: string): string {
   return parts.join("/");
 }
 
-export function rendered(app: App, at: string, html: string, from: string, tasks: Set<string> = new Set()): HTMLElement {
+export function rendered(app: App, at: string, html: string, from: string): HTMLElement {
   const article = element("article", { class: "markdown" });
   article.append(DOMPurify.sanitize(html, { RETURN_DOM_FRAGMENT: true }));
   const files = filesAt(app, at);
@@ -45,7 +45,7 @@ export function rendered(app: App, at: string, html: string, from: string, tasks
     const path = resolve(reference, from);
     const file = byPath.get(path);
     let route: Route | null = null;
-    if (file) route = tasks.has(file.file) ? { view: "tasks", at, task: file.file } : { view: "files", at, file: file.file };
+    if (file) route = { view: "files", at, file: file.file };
     else if (path === "" || files.some((each) => each.path.startsWith(`${path}/`))) route = { view: "files", at, folder: path };
     if (!route) {
       anchor.removeAttribute("href");

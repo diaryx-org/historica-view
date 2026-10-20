@@ -1,6 +1,5 @@
-//! A workspace with a README and a task tracker, recorded, published as a
-//! stranger finds it, and read back through the manifest the way the page
-//! reads it.
+//! A repository with a README, recorded, published as a stranger finds it,
+//! and read back through the manifest the way the page reads it.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -48,60 +47,33 @@ fn write(base: &Path, path: &str, text: &str) {
     fs::write(path, text).unwrap();
 }
 
-/// A prov workspace as the tasks preset lays one out: an index titled
-/// `Tasks` in the README's contents, two open tasks, a closed one on the
-/// shelf, and a document with a status that is not under `Tasks` at all.
+/// A README with frontmatter, and a prov tracker beside it, which the view
+/// reads as nothing but files.
 fn workspace(base: &Path) -> [RevisionId; 2] {
     let mut store = Store::init(base.join("history")).expect("a store");
     write(
         base,
         "README.md",
-        "---\ntitle: Example\ndescription: A repository with a tracker\ncontents:\n- '[Tasks](/docs/tasks/tasks.md)'\n- '[Proposals](/docs/proposals/proposals.md)'\n---\n# Example\n\nSee [the tasks](docs/tasks/tasks.md).\n",
+        "---\ntitle: Example\ndescription: A repository with a tracker\ncontents:\n- '[Tasks](/docs/tasks/tasks.md)'\n---\n# Example\n\nSee [the tasks](docs/tasks/tasks.md).\n",
     );
     write(
         base,
         "docs/tasks/tasks.md",
-        "---\ntitle: Tasks\npart_of: '[Example](/README.md)'\ncontents:\n- '[Closed tasks](/docs/tasks/closed/closed.md)'\n- '[a merge agrees by text](/docs/tasks/a-merge-agrees-by-text.md)'\n- '[a listing ending in a carriage return](listing-ends-in-cr.md)'\n---\n# Tasks\n",
-    );
-    write(
-        base,
-        "docs/tasks/closed/closed.md",
-        "---\ntitle: Closed tasks\npart_of: '[Tasks](/docs/tasks/tasks.md)'\ncontents:\n- '[an export restates its indexes whole](/docs/tasks/closed/export-restates-indexes.md)'\n---\n# Closed tasks\n",
+        "---\ntitle: Tasks\npart_of: '[Example](/README.md)'\ncontents:\n- '[a merge agrees by text](/docs/tasks/a-merge-agrees-by-text.md)'\n---\n# Tasks\n",
     );
     write(
         base,
         "docs/tasks/a-merge-agrees-by-text.md",
-        "---\ntitle: a merge agrees by text\npart_of: '[Tasks](/docs/tasks/tasks.md)'\ncreated: 2026-10-01T00:00:00Z\nstatus: open\nauthor: ada\n---\n# a merge agrees by text\n\n**Done when** it does.\n",
-    );
-    write(
-        base,
-        "docs/tasks/listing-ends-in-cr.md",
-        "---\ntitle: a listing ending in a carriage return\npart_of: '[Tasks](tasks.md)'\ncreated: 2026-10-05T00:00:00Z\nstatus: in-progress\n---\n# CR\n",
-    );
-    write(
-        base,
-        "docs/tasks/closed/export-restates-indexes.md",
-        "---\ntitle: an export restates its indexes whole\npart_of: '[Closed tasks](/docs/tasks/closed/closed.md)'\ncreated: 2026-09-01T00:00:00Z\nstatus: done\n---\n# Done\n",
-    );
-    write(
-        base,
-        "docs/proposals/proposals.md",
-        "---\ntitle: Proposals\npart_of: '[Example](/README.md)'\ncontents:\n- '[Bytes held elsewhere](/docs/proposals/bytes-held-elsewhere.md)'\n---\n# Proposals\n",
-    );
-    write(
-        base,
-        "docs/proposals/bytes-held-elsewhere.md",
-        "---\ntitle: Bytes held elsewhere\npart_of: '[Proposals](/docs/proposals/proposals.md)'\nstatus: implemented\n---\n# Not a task\n",
+        "---\ntitle: a merge agrees by text\npart_of: '[Tasks](/docs/tasks/tasks.md)'\nstatus: open\n---\n# a merge agrees by text\n",
     );
     let first = record_folder(base, &mut store, "Begin the tracker");
 
-    // Closing a task is an edit to its status.
     write(
         base,
-        "docs/tasks/listing-ends-in-cr.md",
-        "---\ntitle: a listing ending in a carriage return\npart_of: '[Tasks](tasks.md)'\ncreated: 2026-10-05T00:00:00Z\nstatus: dropped\n---\n# CR\n",
+        "docs/tasks/a-merge-agrees-by-text.md",
+        "---\ntitle: a merge agrees by text\npart_of: '[Tasks](/docs/tasks/tasks.md)'\nstatus: done\n---\n# a merge agrees by text\n",
     );
-    let second = record_folder(base, &mut store, "Drop the carriage return");
+    let second = record_folder(base, &mut store, "Close the task");
     [first, second]
 }
 
@@ -122,45 +94,12 @@ fn into_memory(directory: &Path) -> Memory {
     memory
 }
 
-#[cfg(feature = "prov")]
 #[test]
-fn tasks_are_the_documents_under_tasks_with_a_status() {
-    let root = scratch("tasks");
+fn the_front_page_is_the_readme_and_a_tracker_is_only_files() {
+    let root = scratch("overview");
     let base = root.join("repo");
-    let [first, second] = workspace(&base);
+    let [_, second] = workspace(&base);
     let view = View::open(into_memory(&base.join("history"))).expect("the store opens");
-
-    let titles = |at: &RevisionId| -> Vec<(String, String, bool)> {
-        view.tasks(&at.to_string())
-            .expect("the tasks")
-            .into_iter()
-            .map(|task| (task.title, task.status, task.closed))
-            .collect()
-    };
-    assert_eq!(
-        titles(&first),
-        [
-            (
-                "a listing ending in a carriage return".to_owned(),
-                "in-progress".to_owned(),
-                false
-            ),
-            (
-                "a merge agrees by text".to_owned(),
-                "open".to_owned(),
-                false
-            ),
-            (
-                "an export restates its indexes whole".to_owned(),
-                "done".to_owned(),
-                true
-            ),
-        ]
-    );
-    // The tracker at a later revision is the tracker as that revision has it.
-    let later = titles(&second);
-    assert_eq!(later[0].0, "a merge agrees by text");
-    assert!(later[1..].iter().all(|(_, _, closed)| *closed));
 
     let overview = view.overview(&second.to_string()).expect("the overview");
     assert_eq!(overview.title.as_deref(), Some("Example"));
@@ -168,19 +107,25 @@ fn tasks_are_the_documents_under_tasks_with_a_status() {
         overview.description.as_deref(),
         Some("A repository with a tracker")
     );
-    assert_eq!((overview.open_tasks, overview.closed_tasks), (1, 2));
     let readme = overview.readme.expect("a README");
     assert_eq!(readme.path, "README.md");
     assert!(readme.html.contains("<h1>Example</h1>"), "{}", readme.html);
     assert!(!readme.html.contains("description:"), "{}", readme.html);
 
-    let task = view.tasks(&second.to_string()).unwrap().remove(0);
-    let detail = view
-        .task(&second.to_string(), &task.file)
-        .expect("the task")
-        .expect("a document");
-    assert!(detail.html.contains("<strong>Done when</strong>"));
-    assert_eq!(detail.task.author.as_deref(), Some("ada"));
+    let paths: Vec<String> = view
+        .files(&second.to_string())
+        .unwrap()
+        .into_iter()
+        .map(|file| file.path)
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "README.md",
+            "docs/tasks/a-merge-agrees-by-text.md",
+            "docs/tasks/tasks.md"
+        ]
+    );
 }
 
 #[test]
@@ -230,29 +175,21 @@ fn a_published_copy_reads_back_through_its_paged_manifest() {
     let graph = view.graph();
     assert_eq!(graph.revisions.len(), 2);
     assert_eq!(graph.revisions[0].id, second.to_string());
-    let tasks = if cfg!(feature = "prov") { 3 } else { 0 };
-    assert_eq!(view.tasks(&second.to_string()).unwrap().len(), tasks);
+    assert_eq!(view.files(&second.to_string()).unwrap().len(), 3);
 }
 
 #[test]
-fn a_folder_that_is_not_a_workspace_has_a_history_and_no_tracker() {
+fn a_readme_without_markdown_is_still_the_front_page() {
     let root = scratch("plain");
     let base = root.join("repo");
     let mut store = Store::init(base.join("history")).expect("a store");
-    // Documents with statuses, but no root document to find them from.
     write(&base, "README", "Plain text, and no frontmatter.\n");
-    write(
-        &base,
-        "notes/a.md",
-        "---\ntitle: A note\nstatus: open\npart_of: '[Tasks](tasks.md)'\n---\n# A note\n",
-    );
     let at = record_folder(&base, &mut store, "Begin").to_string();
     let view = View::open(into_memory(&base.join("history"))).expect("the store opens");
 
     assert_eq!(view.graph().revisions.len(), 1);
-    assert_eq!(view.tasks(&at).expect("no tracker"), []);
     let overview = view.overview(&at).expect("the overview");
-    assert_eq!((overview.open_tasks, overview.closed_tasks), (0, 0));
+    assert_eq!(overview.title, None);
     assert_eq!(overview.readme.expect("a README").path, "README");
 }
 

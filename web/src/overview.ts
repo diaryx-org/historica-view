@@ -3,7 +3,7 @@
 import { type App, href, type Route } from "./app";
 import { ago, element, error, link, short, title, who } from "./dom";
 import { rendered } from "./markdown";
-import type { Overview, Task } from "./types";
+import type { Overview } from "./types";
 
 /// Whether a git mirror sits beside the manifest, answered once.
 let mirror: Promise<URL | null> | null = null;
@@ -53,10 +53,8 @@ export function showOverview(app: App, route: Route & { view: "overview" }) {
     return;
   }
   let overview: Overview;
-  let tasks: Task[];
   try {
     overview = JSON.parse(app.viewer.overview(route.at)) as Overview;
-    tasks = JSON.parse(app.viewer.tasks(route.at)) as Task[];
   } catch (failure) {
     app.right.replaceChildren(error(failure));
     return;
@@ -67,12 +65,9 @@ export function showOverview(app: App, route: Route & { view: "overview" }) {
   const heading = element("h2", { class: "repository" }, overview.title ?? app.origin.slug ?? "Repository");
   const facts = element("p", { class: "facts" });
   const history = { view: "history" as const, id: route.at };
-  const open = { view: "tasks" as const, at: route.at };
   facts.append(
     link(`${app.graph.revisions.length} revisions`, href(history), () => app.go(history)),
-    ` · ${app.graph.names.length} bookmark${app.graph.names.length === 1 ? "" : "s"} · `,
-    link(`${overview.open_tasks} open task${overview.open_tasks === 1 ? "" : "s"}`, href(open), () => app.go(open)),
-    ` · ${overview.closed_tasks} closed`,
+    ` · ${app.graph.names.length} bookmark${app.graph.names.length === 1 ? "" : "s"}`,
   );
 
   const last = element(
@@ -98,7 +93,7 @@ export function showOverview(app: App, route: Route & { view: "overview" }) {
         "div",
         { class: "readme" },
         element("div", { class: "readme-name" }, link(readme.path, href(file), () => app.go(file))),
-        rendered(app, route.at, readme.html, readme.path, new Set(tasks.map((task) => task.file))),
+        rendered(app, route.at, readme.html, readme.path),
       ),
     );
   } else {

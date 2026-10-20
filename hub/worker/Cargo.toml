@@ -12,8 +12,8 @@ publish.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-# README and task bodies come back from historica-view unsanitised; the worker
-# sanitises them once, so the HTML it renders and the HTML the client renders
+# A README comes back from historica-view unsanitised; the worker
+# sanitises it once, so the HTML it renders and the HTML the client renders
 # from the same data are both safe.
 ammonia = "4.1"
 console_error_panic_hook = "0.1"

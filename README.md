@@ -18,14 +18,16 @@ repository, and the page a published one is read through.
   over its tip, each signature checked in the page. A key is named only where
   the trust kept in the reader's own copy, `history/trust/`, names it; a
   published copy's trust is never read.
-- **Tasks** is the repository's tracker, read by
-  [prov](https://github.com/diaryx-org/prov) as its tasks preset keeps it:
-  every document prov reaches under an index titled `Tasks` with a `status`,
-  open unless it is `done` or `dropped`. A task is a file, so the tracker at
-  any revision is the tracker as it stood then, and a task's history is its
-  file's. A store whose folder is not a prov workspace has no tracker, and
-  everything else works as before; building without the `prov` feature, on
-  by default, leaves prov out of the page altogether.
+
+A repository that keeps [prov](https://github.com/diaryx-org/prov)'s
+documents, a task tracker among them, shows them in Files as it shows any
+other file. The view reads nothing as a tracker.
+
+A remark names what it is about by a target: `historica:<root>` for a
+repository, by the digest of the revision its history began with, which every
+fork shares, and `historica:<root>/<file>` for a file in it, by the
+identifier the file keeps through every move. `src/target.rs` argues which
+root names a store that holds several.
 
 A proposal's title is a convention, not anything historica defines: the
 `diaryx.change-set` header on its first revision where that says more than
@@ -80,7 +82,7 @@ host allows the page to fetch from it.
 ## The hub
 
 [`hub/`](hub/README.md) is the same repository served from Cloudflare: a
-worker that renders each repository's front page and tasks with Dioxus, R2
+worker that renders each repository's front page with Dioxus, R2
 holding what `publish.sh` makes, and a Durable Object per repository holding
 it open. It is a spike, in a workspace of its own.
 
@@ -91,8 +93,9 @@ it open. It is a spike, in a workspace of its own.
 | `src/memory.rs` | a read-only `Filesystem` over files held in memory |
 | `src/view.rs` | the questions the page asks, answered natively and tested with `cargo test` |
 | `src/published.rs` | a published copy's manifest, whole or paged, and the files it lists |
-| `src/workspace.rs` | the README, and the task tracker prov reads, at a revision |
+| `src/workspace.rs` | the README at a revision |
 | `src/proposals.rs` | the open proposals, and the claims over their tips |
+| `src/target.rs` | what a remark is about: a repository by its root revision, a file by its identifier |
 | `src/document.rs` | frontmatter, links between documents, and Markdown rendered to HTML |
 | `src/lib.rs` | those answers, spelled as JSON for the page |
 | `web/vite.config.ts` | the dev server that hands the page one local store |
@@ -102,7 +105,6 @@ it open. It is a spike, in a workspace of its own.
 | `web/src/files.ts` | the Files view |
 | `web/src/load.ts` | where the store comes from: `?offer=`, `offer.txt`, or the dev server |
 | `web/src/overview.ts` | the Overview: the README and how to take a copy |
-| `web/src/tasks.ts` | the Tasks view |
 | `web/src/markdown.ts` | a rendered document sanitised, with its links and images read inside the store |
 | `web/src/main.ts` | moving between views |
 | `publish.sh` | a repository published as a site |

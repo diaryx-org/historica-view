@@ -13,6 +13,7 @@ pub mod document;
 pub mod memory;
 pub mod proposals;
 pub mod published;
+pub mod target;
 pub mod view;
 pub mod workspace;
 

@@ -5,7 +5,6 @@ import { showFiles } from "./files";
 import { showHistory, step } from "./history";
 import { load } from "./load";
 import { showOverview } from "./overview";
-import { showTasks } from "./tasks";
 import type { Graph } from "./types";
 
 const left = document.querySelector<HTMLElement>("#left")!;
@@ -35,7 +34,6 @@ async function main() {
     overview: { view: "overview", at: newest },
     files: { view: "files", at: newest, folder: "" },
     history: { view: "history", id: newest },
-    tasks: { view: "tasks", at: newest },
   };
 
   const show = () => {
@@ -47,7 +45,6 @@ async function main() {
     document.body.dataset.view = route.view;
     if (route.view === "history") showHistory(app, route);
     else if (route.view === "files") showFiles(app, route);
-    else if (route.view === "tasks") showTasks(app, route);
     else showOverview(app, route);
   };
 

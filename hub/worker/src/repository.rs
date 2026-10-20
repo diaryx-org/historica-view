@@ -24,7 +24,7 @@ use std::io::Read;
 use std::path::Path;
 use std::rc::Rc;
 
-use historica_hub_app::{Head, Page, Repo, TaskDetail};
+use historica_hub_app::{Head, Page, Repo};
 use historica_view::memory::Memory;
 use historica_view::published::{Published, verified};
 use historica_view::view::{ROOT, View};
@@ -195,36 +195,14 @@ fn page(loaded: &Loaded, slug: &str, path: &str, origin: &str) -> Page {
         .filter(|part| !part.is_empty())
         .collect();
     let answered = (|| -> std::result::Result<Page, String> {
-        let tasks = loaded.view.tasks(at).map_err(|failure| failure.0)?;
-        let links = Links::new(slug, &tasks);
         Ok(match rest.as_slice() {
             [] => {
                 let mut overview = loaded.view.overview(at).map_err(|failure| failure.0)?;
                 if let Some(readme) = overview.readme.as_mut() {
-                    readme.html = links.sanitise(&readme.html, &readme.path);
+                    readme.html = sanitise(slug, &readme.html, &readme.path);
                 }
                 Page::Overview { repo, overview }
             }
-            ["tasks"] => Page::Tasks {
-                repo,
-                tasks,
-                closed: false,
-            },
-            ["tasks", "closed"] => Page::Tasks {
-                repo,
-                tasks,
-                closed: true,
-            },
-            ["tasks", file] => match loaded.view.task(at, file) {
-                Ok(Some(task)) => Page::Task {
-                    task: TaskDetail {
-                        html: links.sanitise(&task.html, &task.task.path),
-                        task: task.task,
-                    },
-                    repo,
-                },
-                _ => missing(format!("{slug} has no task {file}.")),
-            },
             _ => missing(format!("{slug} has no page {path}.")),
         })
     })();
@@ -243,47 +221,26 @@ fn io(error: std::io::Error) -> worker::Error {
     worker::Error::RustError(format!("the archive: {error}"))
 }
 
-/// Where a document's relative links go on the hub: a task to its page,
-/// anything else to the file as the copy holds it.
-struct Links {
-    slug: String,
-    tasks: HashMap<String, String>,
-}
-
-impl Links {
-    fn new(slug: &str, tasks: &[historica_hub_app::Task]) -> Self {
-        Self {
-            slug: slug.to_owned(),
-            tasks: tasks
-                .iter()
-                .map(|task| (task.path.clone(), task.file.clone()))
-                .collect(),
-        }
-    }
-
-    /// `html` made safe to show, with its relative links read against the
-    /// document at `from`.
-    fn sanitise(&self, html: &str, from: &str) -> String {
-        let rewrite = Rewrite {
-            slug: self.slug.clone(),
-            tasks: self.tasks.clone(),
-            directory: from
-                .rsplit_once('/')
-                .map(|(dir, _)| dir.to_owned())
-                .unwrap_or_default(),
-        };
-        ammonia::Builder::default()
-            .url_relative(ammonia::UrlRelative::Custom(Box::new(rewrite)))
-            .add_generic_attributes(["align"])
-            .clean(html)
-            .to_string()
-    }
+/// `html` made safe to show, with its relative links read against the
+/// document at `from` and sent to the file as the copy holds it.
+fn sanitise(slug: &str, html: &str, from: &str) -> String {
+    let rewrite = Rewrite {
+        slug: slug.to_owned(),
+        directory: from
+            .rsplit_once('/')
+            .map(|(dir, _)| dir.to_owned())
+            .unwrap_or_default(),
+    };
+    ammonia::Builder::default()
+        .url_relative(ammonia::UrlRelative::Custom(Box::new(rewrite)))
+        .add_generic_attributes(["align"])
+        .clean(html)
+        .to_string()
 }
 
 /// A relative link, rewritten to where the hub shows what it names.
 struct Rewrite {
     slug: String,
-    tasks: HashMap<String, String>,
     directory: String,
 }
 
@@ -299,10 +256,7 @@ impl ammonia::UrlRelativeEvaluate<'_> for Rewrite {
         let path = path.split('?').next().unwrap_or(path);
         let resolved = resolve(path, &self.directory);
         let slug = &self.slug;
-        Some(Cow::Owned(match self.tasks.get(&resolved) {
-            Some(file) => format!("/{slug}/tasks/{file}"),
-            None => format!("/{slug}/raw/{resolved}{fragment}"),
-        }))
+        Some(Cow::Owned(format!("/{slug}/raw/{resolved}{fragment}")))
     }
 }
 
