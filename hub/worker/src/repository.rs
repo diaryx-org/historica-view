@@ -8,12 +8,21 @@
 //! keeps the store open between requests, and asks R2 only whether the
 //! manifest has moved — one `head` — before answering.
 //!
-//! What it loads is what `push.sh` uploaded: the paged manifest beside the
-//! copy, its pages, and the copy's `history/` as one archive. Every file the
-//! manifest lists is taken from the archive and hashed against the digest the
-//! manifest names it by, so an archive that disagrees with the manifest is
-//! refused rather than half-believed — the same check `historica fetch`
-//! makes, and the page makes, of a copy anywhere.
+//! It answers two things: a page, from the store, and which blob a path of
+//! the repository is, from its listings ([`Site`]). The listings are read
+//! first and alone, so serving a file never waits on the store.
+//!
+//! The store is opened from what `push.sh` uploaded: the manifest, its
+//! pages, and the store's `history/` as one archive, which the site listing
+//! names. Every file the manifest lists is taken from the archive and hashed
+//! against the digest the manifest names it by, so an archive that disagrees
+//! with the manifest is refused rather than half-believed — the same check
+//! `historica fetch` makes, and the page makes, of a copy anywhere.
+//!
+//! Nothing reaches this but the hub's worker, and the worker reaches it only
+//! through a [`Granted`](crate::gate::Granted), which only the read gate
+//! makes: a private repository's object answers only for a reader the gate
+//! let through. It is named by the repository's id, which is never reused.
 //!
 //! [`Filesystem`]: historica::fs::Filesystem
 
@@ -26,16 +35,27 @@ use std::rc::Rc;
 
 use historica_hub_app::{Head, Page, Repo};
 use historica_view::memory::Memory;
-use historica_view::published::{Published, verified};
+use historica_view::published::{Listing, Published, verified};
 use historica_view::view::{ROOT, View};
-use worker::{DurableObject, Env, Request, Response, Result, State, durable_object};
+use worker::{Bucket, DurableObject, Env, Request, Response, Result, State, durable_object};
 
-use crate::{ARCHIVE, BUCKET, prefix};
+use crate::BUCKET;
+use crate::gate::prefix;
+use crate::route::Within;
+use crate::site::{MANIFEST, SITE, Site, blob};
 
-/// A repository as it was loaded, and the manifest it was loaded from.
-struct Loaded {
+/// A repository's listings, as the manifest it read them with left them.
+struct Opened {
     /// The manifest's etag: when R2's differs, the repository has been pushed
     /// to since.
+    etag: String,
+    site: Site,
+    listing: Listing,
+}
+
+/// A repository's store, open.
+struct Loaded {
+    /// The etag of the manifest it was opened by.
     etag: String,
     view: View,
     revisions: usize,
@@ -45,6 +65,7 @@ struct Loaded {
 #[durable_object]
 pub struct Repository {
     env: Env,
+    opened: RefCell<Option<Rc<Opened>>>,
     loaded: RefCell<Option<Rc<Loaded>>>,
 }
 
@@ -52,67 +73,135 @@ impl DurableObject for Repository {
     fn new(_state: State, env: Env) -> Self {
         Self {
             env,
+            opened: RefCell::new(None),
             loaded: RefCell::new(None),
         }
     }
 
-    /// `GET /page?slug=…&path=…&origin=…`: the [`Page`] at a repository's
-    /// path, as JSON. Always `200`; a page that is not there is
-    /// [`Page::Missing`], and the worker answers it with a `404`.
+    /// Two questions, each by query:
+    ///
+    /// - `GET /page?id=…&owner=…&slug=…&private=…&forked=…&origin=…`: the
+    ///   repository's front [`Page`], as JSON. Always `200`; a page that is
+    ///   not there is [`Page::Missing`], and the worker answers it with a
+    ///   `404`.
+    /// - `GET /file?id=…&kind=site|raw|git&path=…`: which blob that path is,
+    ///   as a [`Found`](crate::site::Found) in JSON, or `404` where the
+    ///   repository's listings do not name it.
     async fn fetch(&self, request: Request) -> Result<Response> {
         let url = request.url()?;
         let query: HashMap<String, String> = url.query_pairs().into_owned().collect();
-        let (Some(slug), Some(path), Some(origin)) =
-            (query.get("slug"), query.get("path"), query.get("origin"))
-        else {
-            return Response::error("slug, path and origin are wanted", 400);
+        let Some(id) = query.get("id").and_then(|id| id.parse::<i64>().ok()) else {
+            return Response::error("id is wanted", 400);
         };
-        let page = match self.load(slug).await {
-            Ok(Some(loaded)) => page(&loaded, slug, path, origin),
-            Ok(None) => missing(format!("Nothing is published as {slug}.")),
-            Err(failure) => missing(format!("{slug} could not be read: {failure}")),
-        };
-        Response::from_json(&page)
+        match url.path() {
+            "/file" => {
+                let path = query.get("path").cloned().unwrap_or_default();
+                let within = match query.get("kind").map(String::as_str) {
+                    Some("site") => Within::Site(path),
+                    Some("raw") => Within::Raw(path),
+                    Some("git") => Within::Git(path),
+                    _ => return Response::error("kind is site, raw or git", 400),
+                };
+                let found = match self.open(id).await? {
+                    Some(opened) => opened.site.resolve(&within),
+                    None => None,
+                };
+                match found {
+                    Some(found) => Response::from_json(&found),
+                    None => Response::error("not here", 404),
+                }
+            }
+            "/page" => {
+                let (Some(owner), Some(slug), Some(origin)) =
+                    (query.get("owner"), query.get("slug"), query.get("origin"))
+                else {
+                    return Response::error("owner, slug and origin are wanted", 400);
+                };
+                let shown = Shown {
+                    owner: owner.clone(),
+                    slug: slug.clone(),
+                    origin: origin.clone(),
+                    private: query.get("private").is_some_and(|value| value == "1"),
+                    forked_from: query
+                        .get("forked")
+                        .filter(|value| !value.is_empty())
+                        .cloned(),
+                };
+                let spelled = format!("{owner}/{slug}");
+                let page = match self.load(id).await {
+                    Ok(Some(loaded)) => page(&loaded, &shown),
+                    Ok(None) => missing(format!("Nothing is published as {spelled}.")),
+                    Err(failure) => missing(format!("{spelled} could not be read: {failure}")),
+                };
+                Response::from_json(&page)
+            }
+            _ => Response::error("not here", 404),
+        }
     }
 }
 
+/// What the page says of a repository beyond its store.
+struct Shown {
+    owner: String,
+    slug: String,
+    origin: String,
+    private: bool,
+    forked_from: Option<String>,
+}
+
 impl Repository {
-    async fn load(&self, slug: &str) -> Result<Option<Rc<Loaded>>> {
+    /// The repository's listings, read again where the manifest has moved.
+    /// `None` where nothing has been pushed to it.
+    async fn open(&self, id: i64) -> Result<Option<Rc<Opened>>> {
         let bucket = self.env.bucket(BUCKET)?;
-        let prefix = prefix(slug);
-        let Some(manifest) = bucket.head(format!("{prefix}offer.txt")).await? else {
+        let prefix = prefix(id);
+        let Some(manifest) = bucket.head(format!("{prefix}{MANIFEST}")).await? else {
             return Ok(None);
         };
         let etag = manifest.http_etag();
+        if let Some(opened) = self.opened.borrow().as_ref()
+            && opened.etag == etag
+        {
+            return Ok(Some(opened.clone()));
+        }
+        let text = String::from_utf8(read(&bucket, format!("{prefix}{MANIFEST}")).await?)
+            .map_err(|_| worker::Error::RustError("the manifest is not text".into()))?;
+        let mut published = Published::read(&text).map_err(failed)?;
+        let pages = published.pages();
+        for (path, digest) in &pages {
+            let bytes = read(&bucket, blob(digest)).await?;
+            published.page(path, &bytes).map_err(failed)?;
+        }
+        let listing = published.listing().map_err(failed)?;
+        let listed = String::from_utf8(read(&bucket, format!("{prefix}{SITE}")).await?)
+            .map_err(|_| worker::Error::RustError("the site listing is not text".into()))?;
+        let site = Site::new(&pages, &listing, &listed).map_err(worker::Error::RustError)?;
+        let opened = Rc::new(Opened {
+            etag,
+            site,
+            listing,
+        });
+        *self.opened.borrow_mut() = Some(opened.clone());
+        Ok(Some(opened))
+    }
+
+    /// The repository's store, opened again where the manifest has moved.
+    async fn load(&self, id: i64) -> Result<Option<Rc<Loaded>>> {
+        let Some(opened) = self.open(id).await? else {
+            return Ok(None);
+        };
         if let Some(loaded) = self.loaded.borrow().as_ref()
-            && loaded.etag == etag
+            && loaded.etag == opened.etag
         {
             return Ok(Some(loaded.clone()));
         }
-
-        let read = |key: String| {
-            let bucket = &bucket;
-            async move {
-                let object = bucket.get(&key).execute().await?;
-                let Some(body) = object.as_ref().and_then(|object| object.body()) else {
-                    return Err(worker::Error::RustError(format!(
-                        "{key} is not in the bucket"
-                    )));
-                };
-                body.bytes().await
-            }
-        };
-        let text = String::from_utf8(read(format!("{prefix}offer.txt")).await?)
-            .map_err(|_| worker::Error::RustError("the manifest is not text".into()))?;
-        let mut published = Published::read(&text).map_err(failed)?;
-        for page in published.wanted() {
-            let bytes = read(format!("{prefix}{page}")).await?;
-            published.page(&page, &bytes).map_err(failed)?;
-        }
-        let listing = published.listing().map_err(failed)?;
-
+        let bucket = self.env.bucket(BUCKET)?;
+        let listing = &opened.listing;
+        let archive = opened.site.archive().ok_or_else(|| {
+            worker::Error::RustError("the site listing names no history.tar".into())
+        })?;
+        let archive = read(&bucket, blob(archive)).await?;
         let mut archived: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-        let archive = read(format!("{prefix}{ARCHIVE}")).await?;
         let mut entries = tar::Archive::new(archive.as_slice());
         for entry in entries.entries().map_err(io)? {
             let mut entry = entry.map_err(io)?;
@@ -169,7 +258,7 @@ impl Repository {
             when: newest.when.clone(),
         };
         let loaded = Rc::new(Loaded {
-            etag,
+            etag: opened.etag.clone(),
             revisions: graph.revisions.len(),
             view,
             head,
@@ -179,34 +268,28 @@ impl Repository {
     }
 }
 
-/// The page at `path`, which begins with `/<slug>`.
-fn page(loaded: &Loaded, slug: &str, path: &str, origin: &str) -> Page {
+/// The front page of a repository.
+fn page(loaded: &Loaded, shown: &Shown) -> Page {
     let repo = Repo {
-        slug: slug.to_owned(),
-        origin: origin.to_owned(),
+        owner: shown.owner.clone(),
+        slug: shown.slug.clone(),
+        origin: shown.origin.clone(),
+        private: shown.private,
+        forked_from: shown.forked_from.clone(),
         revisions: loaded.revisions,
         head: loaded.head.clone(),
     };
     let at = loaded.head.id.as_str();
-    let rest: Vec<&str> = path
-        .trim_matches('/')
-        .split('/')
-        .skip(1)
-        .filter(|part| !part.is_empty())
-        .collect();
-    let answered = (|| -> std::result::Result<Page, String> {
-        Ok(match rest.as_slice() {
-            [] => {
-                let mut overview = loaded.view.overview(at).map_err(|failure| failure.0)?;
-                if let Some(readme) = overview.readme.as_mut() {
-                    readme.html = sanitise(slug, &readme.html, &readme.path);
-                }
-                Page::Overview { repo, overview }
+    match loaded.view.overview(at) {
+        Ok(mut overview) => {
+            if let Some(readme) = overview.readme.as_mut() {
+                let base = format!("/{}/{}", shown.owner, shown.slug);
+                readme.html = sanitise(&base, &readme.html, &readme.path);
             }
-            _ => missing(format!("{slug} has no page {path}.")),
-        })
-    })();
-    answered.unwrap_or_else(missing)
+            Page::Overview { repo, overview }
+        }
+        Err(failure) => missing(failure.0),
+    }
 }
 
 fn missing(why: String) -> Page {
@@ -217,15 +300,25 @@ fn failed(failure: historica_view::view::Failure) -> worker::Error {
     worker::Error::RustError(failure.0)
 }
 
+async fn read(bucket: &Bucket, key: String) -> Result<Vec<u8>> {
+    let object = bucket.get(&key).execute().await?;
+    let Some(body) = object.as_ref().and_then(|object| object.body()) else {
+        return Err(worker::Error::RustError(format!(
+            "{key} is not in the bucket"
+        )));
+    };
+    body.bytes().await
+}
+
 fn io(error: std::io::Error) -> worker::Error {
     worker::Error::RustError(format!("the archive: {error}"))
 }
 
 /// `html` made safe to show, with its relative links read against the
 /// document at `from` and sent to the file as the copy holds it.
-fn sanitise(slug: &str, html: &str, from: &str) -> String {
+fn sanitise(base: &str, html: &str, from: &str) -> String {
     let rewrite = Rewrite {
-        slug: slug.to_owned(),
+        base: base.to_owned(),
         directory: from
             .rsplit_once('/')
             .map(|(dir, _)| dir.to_owned())
@@ -240,7 +333,8 @@ fn sanitise(slug: &str, html: &str, from: &str) -> String {
 
 /// A relative link, rewritten to where the hub shows what it names.
 struct Rewrite {
-    slug: String,
+    /// `/<owner>/<slug>`.
+    base: String,
     directory: String,
 }
 
@@ -255,8 +349,8 @@ impl ammonia::UrlRelativeEvaluate<'_> for Rewrite {
         };
         let path = path.split('?').next().unwrap_or(path);
         let resolved = resolve(path, &self.directory);
-        let slug = &self.slug;
-        Some(Cow::Owned(format!("/{slug}/raw/{resolved}{fragment}")))
+        let base = &self.base;
+        Some(Cow::Owned(format!("{base}/raw/{resolved}{fragment}")))
     }
 }
 

@@ -16,7 +16,8 @@
 	},
 	"r2_buckets": [
 		{
-			// Every repository, under `repos/<slug>/`, as push.sh uploads it.
+			// Every file pushed, once, under `blobs/sha256/<digest>`; and each
+			// repository's manifest and site listing under `repos/<id>/`.
 			"binding": "HUB",
 			"bucket_name": "historica-hub"
 		}
@@ -30,10 +31,20 @@
 			}
 		]
 	},
+	"d1_databases": [
+		{
+			// The auth worker's database (../auth/wrangler.jsonc), for the
+			// hub's own tables in it: repositories, members, and what each
+			// holds. Its migrations are applied from ../auth.
+			"binding": "DB",
+			"database_name": "historica-hub-auth",
+			"database_id": "e4f16c0c-7f71-4537-a1b2-c76c1a52d04e"
+		}
+	],
 	"services": [
 		{
-			// The auth worker, ../auth/: better-auth, and whether a push key
-			// may push to a repository.
+			// The auth worker, ../auth/: better-auth, and whose push key a
+			// bearer token is.
 			"binding": "AUTH",
 			"service": "historica-hub-auth"
 		}

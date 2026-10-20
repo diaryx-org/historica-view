@@ -16,8 +16,9 @@
 	},
 	"d1_databases": [
 		{
-			// The accounts, sessions and push keys, and who owns each
-			// repository; migrations/ creates them.
+			// The accounts, their handles, sessions and push keys; and the
+			// hub's repositories, members and holdings, which the hub's worker
+			// binds too. migrations/ creates them all.
 			"binding": "DB",
 			"database_name": "historica-hub-auth",
 			"database_id": "e4f16c0c-7f71-4537-a1b2-c76c1a52d04e",
