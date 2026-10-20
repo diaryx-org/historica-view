@@ -7,6 +7,7 @@
 import { apiKey } from "@better-auth/api-key";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { username } from "better-auth/plugins";
+import { type Mailer, reset, verification } from "./mail";
 
 export interface Settings {
   database: BetterAuthOptions["database"];
@@ -16,6 +17,11 @@ export interface Settings {
   baseURL: string;
   /** A GitHub OAuth app, when the hub has one. */
   github?: { clientId: string; clientSecret: string };
+  /**
+   * Sends the hub's mail, when it can. With it, an address is verified
+   * before its account can sign in, and a forgotten password can be reset.
+   */
+  mail?: Mailer;
 }
 
 /** The prefix every push key starts with, so a leaked one is recognisable. */
@@ -38,13 +44,33 @@ export function handleOk(handle: string): boolean {
     !RESERVED.includes(handle);
 }
 
-export function hubAuth({ database, secret, baseURL, github }: Settings) {
+export function hubAuth({ database, secret, baseURL, github, mail }: Settings) {
   return betterAuth({
     database,
     secret,
     baseURL,
     basePath: "/api/auth",
-    emailAndPassword: { enabled: true },
+    emailAndPassword: {
+      enabled: true,
+      // No session, and so no push key, until the address is shown to be
+      // the account's. GitHub's addresses come verified.
+      requireEmailVerification: !!mail,
+      sendResetPassword: mail
+        ? ({ user, url }) => mail(reset(user.email, url))
+        : undefined,
+      revokeSessionsOnPasswordReset: true,
+    },
+    emailVerification: mail
+      ? {
+          sendVerificationEmail: ({ user, url }) =>
+            mail(verification(user.email, url)),
+          sendOnSignUp: true,
+          // An account made before the hub sent mail, signing in, is sent a
+          // link rather than turned away with no way to verify.
+          sendOnSignIn: true,
+          autoSignInAfterVerification: true,
+        }
+      : undefined,
     socialProviders: github ? { github } : {},
     telemetry: { enabled: false },
     // better-auth's defaults, stated, because the hub depends on them: the

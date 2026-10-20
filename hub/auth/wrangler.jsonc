@@ -12,8 +12,21 @@
 	"vars": {
 		// The hub's own address, which every auth URL and cookie is under.
 		// `wrangler dev` reads http://localhost:8787 from .dev.vars instead.
-		"BETTER_AUTH_URL": "https://historica-hub.harrisadam42103.workers.dev"
+		"BETTER_AUTH_URL": "https://historica-hub.harrisadam42103.workers.dev",
+		// The address the hub's mail comes from, which EMAIL below allows.
+		"EMAIL_FROM": "noreply@mail.diaryx.org"
 	},
+	"send_email": [
+		{
+			// Cloudflare Email Sending: verification and password-reset links,
+			// to any address. Needs mail.diaryx.org enabled for sending, with
+			// Email preview off, so Cloudflare does not keep the messages (each
+			// one a live link). `wrangler dev` writes each message to a file
+			// and logs where, rather than sending it.
+			"name": "EMAIL",
+			"allowed_sender_addresses": ["noreply@mail.diaryx.org"]
+		}
+	],
 	"d1_databases": [
 		{
 			// The accounts, their handles, sessions and push keys; and the

@@ -28,7 +28,16 @@
         <button type="submit" value="in">Sign in</button>
         <button type="submit" value="up">Create account</button>
         <button type="button" id="github">Sign in with GitHub</button>
+        <button type="button" id="forgot">Forgot password</button>
       </div>
+    </form>
+  </section>
+
+  <section id="resetting" hidden>
+    <h2>Choose a new password</h2>
+    <form class="account-form" id="reset">
+      <input name="password" type="password" placeholder="New password" autocomplete="new-password" minlength="8" required>
+      <div class="actions"><button type="submit">Set password</button></div>
     </form>
   </section>
 
@@ -64,6 +73,7 @@
     </form>
   </section>
 
+  <p class="quiet" id="notice" role="status"></p>
   <p class="account-error" id="error" role="alert"></p>
 </div>
 <script type="module">
@@ -94,8 +104,32 @@ function failed(error) {
   $("error").textContent = error.message;
 }
 
+function notice(text) {
+  $("notice").textContent = text;
+}
+
+/**
+ * What a link from the hub's mail came back with: `?token=` from a
+ * password reset, or `?error=` from a link that did not work. Taken out of
+ * the address once read, so a reload does not read it again.
+ */
+const back = new URLSearchParams(location.search);
+let resetToken = back.get("token");
+if (back.has("error")) {
+  const error = back.get("error").toLowerCase();
+  failed(new Error(error === "token_expired"
+    ? "That link has expired. Sign in, or ask for a new reset link, to be sent another."
+    : "That link did not work. Sign in, or ask for a new reset link, to be sent another."));
+}
+if (back.size > 0) history.replaceState(null, "", location.pathname);
+
 async function show() {
   $("error").textContent = "";
+  $("resetting").hidden = !resetToken;
+  if (resetToken) {
+    $("signed-out").hidden = $("signed-in").hidden = true;
+    return;
+  }
   const session = await call("get-session");
   $("signed-out").hidden = !!session;
   $("signed-in").hidden = !session;
@@ -131,10 +165,51 @@ $("sign-in").onsubmit = (event) => {
   const signUp = event.submitter?.value === "up";
   const name = form.get("name") || email.split("@")[0];
   const username = form.get("username") || undefined;
+  // Where a verification link comes back to, signed in.
+  const callbackURL = "/account/";
+  notice("");
   (signUp
-    ? call("sign-up/email", { name, email, password, username })
-    : call("sign-in/email", { email, password })
-  ).then(show).catch(failed);
+    ? call("sign-up/email", { name, email, password, username, callbackURL })
+    : call("sign-in/email", { email, password, callbackURL })
+  )
+    .then((answer) => {
+      // Signed up but not in: the hub sent a link to verify the address.
+      if (signUp && !answer?.token) {
+        notice(`We sent a link to ${email}. Open it to verify your email and sign in.`);
+      }
+      return show();
+    })
+    .catch((error) => {
+      if (/verif/i.test(error.message)) {
+        failed(new Error(`Verify your email first: we sent a new link to ${email}.`));
+      } else {
+        failed(error);
+      }
+    });
+};
+
+$("forgot").onclick = () => {
+  const email = $("sign-in").elements.email.value;
+  if (!email) {
+    failed(new Error("Write your email above first."));
+    return;
+  }
+  $("error").textContent = "";
+  call("request-password-reset", { email, redirectTo: "/account/" })
+    .then(() => notice(`If ${email} has an account here, we sent it a link to choose a new password.`))
+    .catch(failed);
+};
+
+$("reset").onsubmit = (event) => {
+  event.preventDefault();
+  const newPassword = new FormData(event.target).get("password");
+  call("reset-password", { newPassword, token: resetToken })
+    .then(() => {
+      resetToken = null;
+      notice("Your password is changed. Sign in with it.");
+      return show();
+    })
+    .catch(failed);
 };
 
 $("github").onclick = () =>
