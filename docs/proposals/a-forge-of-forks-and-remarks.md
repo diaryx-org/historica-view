@@ -10,11 +10,17 @@ updated: 2026-10-19
 
 ## Status
 
-Draft. Three choices are Adam's, made before writing: the forge grows out of
-[`hub/`](../../hub/README.md), a contribution is a fork rather than a push
-into the maintainer's store, and a discussion is remarks rather than prov
-documents. Prov leaves the forge entirely. The open questions at the end are
-not decided.
+Draft. Adam made these choices:
+
+- The forge grows out of [`hub/`](../../hub/README.md).
+- A contribution is a fork, never a push into the maintainer's store.
+- A discussion is remarks, not prov documents. Prov leaves the forge
+  entirely.
+- Every account has a minisign key of its own, which it can rotate or replace.
+- A reporter can close their own issue.
+- Private repositories are in scope.
+
+The open questions at the end are not decided.
 
 ## What is here already
 
@@ -27,8 +33,10 @@ others yet.
   push keys. A repository is `/<slug>` and belongs to whoever first pushed it.
 - **historica** publishes and takes copies: `export` and `offer` write what a
   stranger fetches ([0042], [0052]), `fetch` takes it over HTTP, and
-  `receive` unions it. [0086] makes a fetched stranger's line *held* — shown,
-  never swept in — until somebody takes it with `carry`.
+  `receive` unions it. [0086], built on main, makes a fetched stranger's line
+  *held* — shown, never swept in — until somebody takes it with `carry`.
+  Which line a copy stands on is a `Following` rule the embedder supplies,
+  and `Following::Rule` takes any test of one revision.
 - **historica-minisign** signs claims over a revision's digest ([0046]). A
   claim is a fact and travels. Trust in a key is an opinion and stays home.
 - **historica-remark** is the Web Annotation model as a metadata block: a
@@ -59,7 +67,8 @@ chain:
 | suggested change | an `editing` remark | the reviewer's remarks |
 | approval | a minisign claim over the tip, role `reviewer` | the reviewer's claims |
 | merge | `carry`, then the owner publishes | the owner's |
-| close, label | a remark from the owner replying to the issue | the owner's remarks |
+| close, reopen | a reply from the owner or the reporter | the closer's remarks |
+| label | a reply from the owner | the owner's remarks |
 | hide, moderate | suppression of a kept layer | the owner's copy only |
 
 What the hub holds that is not one of these is an index, and the index can be
@@ -77,9 +86,15 @@ they would publish anything. Nothing they do reaches the owner's store.
 
 ## An offer
 
-An offer is a remark in the contributor's own chain, aimed at the repository,
-with the motivation `offering`. Its body is the description. Its fields name
-the fork's `offer.txt` and the tip being offered. Amending the offer is a new
+An offer is a remark pointing to a fork. It sits in the contributor's own
+chain, with the motivation `offering`. Its body is the description. Its
+fields name the fork's `offer.txt` and the tip being offered.
+
+Two things say where an offer goes, and they are different. The *target* is
+the project: the root every fork shares (see below). The *address* is whose
+copy the offer asks to be taken into. A layer is already addressed to one
+store, so an offer to the repository and an offer to somebody's fork are the
+same remark in two differently addressed chains. Amending the offer is a new
 revision of that remark. Withdrawing it is the contributor forgetting or
 abandoning it.
 
@@ -92,7 +107,13 @@ $ historica carry <tip> --onto <head>
 ```
 
 and then publishes. The offer is closed by the owner's reply, or by the hub
-seeing the offered changes in the owner's published line.
+seeing the offered changes in the owner's line.
+
+The owner's line is the heads of the published store under a `Following`
+rule that accepts what the owner's keys vouched for. That is the rule [0086]
+names for a forge, through historica-minisign. A take names the offered tip
+on `supersedes`, so "the owner's line took this offer" is a question about
+the owner's heads.
 
 This repository's History page already lists *proposals*: shared bookmarks
 `changes/<id>` that the accepted line does not reach. That is the in-store
@@ -113,14 +134,24 @@ copy taken years later still holds it, under its writers' own signatures. A
 layer the owner has not kept is still visible on the hub, marked as not kept.
 Keeping a layer is how a newcomer becomes a participant.
 
-An issue is open until the owner replies to it closing it. Labels are the
-same kind of reply. The hub folds the thread into one state, and the fold is
-a function of the remarks, so anybody holding the same remarks gets the same
-state.
+An issue is closed by a closing reply from the owner or from the reporter,
+the writer of the root remark. Either can reopen it, and the latest of their
+replies wins. Labels are the owner's replies. The hub folds the thread into
+one state, and the fold is a function of the remarks, so anybody holding the
+same remarks gets the same state.
 
 The owner, for this purpose, is whoever's keys the reader trusts for the
-repository: on the hub, the keys the owner's account has registered. That is
-the rule [0086] names for a forge, applied to remarks as well as revisions.
+repository. On the hub, that is the keys the owner's account has registered.
+A reporter is recognised by the same means: the key that signed the root
+remark.
+
+A layer the owner has not kept is shown to every reader, folded away under
+the thread by default and marked as not kept. Hiding it from everyone but
+the owner would protect nobody, because the reporter's chain is published at
+its own URL whatever the repository's page shows. What hiding *would* do is
+make the hub the judge of who may speak, which this design exists to avoid.
+Spam is answered by the owner's suppression on their own page, by the hub
+refusing an account, and by limits on how fast a new account can write.
 
 ## What a remark targets
 
@@ -133,6 +164,20 @@ remark on a file follows it through moves. `at` names the revision the writer
 saw, which historica-remark already carries.
 
 [0008]: https://github.com/diaryx-org/historica/blob/main/docs/decisions/0008-tree.md
+
+## Keys
+
+Every account has a minisign key. The hub can make one for the account, in
+the browser, so its secret part never reaches the hub. The page shows the
+secret key once, for the person to keep, and keeps it in the browser's own
+storage so the page can sign the remarks and claims the person writes there.
+The hub keeps only the public key.
+
+A person can rotate the key, or replace it with a public key of their own,
+proved by signing a challenge with it. The account keeps every key it has
+had, with when each was added and retired, so a claim made by a retired key
+still checks for what it signed before retirement. A key that leaked is
+retired as of a date the person names, and claims after it no longer count.
 
 ## The hub
 
@@ -159,6 +204,11 @@ The hub stays what its README says, a courier with pages, and gains:
   page can be remarked on.
 - **No Tasks page.** The prov tracker and this repository's `prov` feature
   go. A repository that keeps prov documents shows them as files.
+- **Private repositories.** Every read of a private repository goes through
+  the worker, which checks the reader against the repository's members.
+  Its forks are private to the same members and the fork's owner, and so is
+  every remark chain addressed to it. Nothing private is served as a plain
+  file, and the static view is built per request or behind the same check.
 
 ## What each repository builds
 
@@ -172,42 +222,46 @@ The work, in roughly the order it can land. None of it is a deploy.
 2. A closing reply, and labels, as fields a `replying` remark may carry, and
    a fold that turns a thread into its state given whose replies count.
 
+**historica-minisign**
+
+3. A `Following` rule: accept a revision that a claim, made by a key the
+   rule is given and valid at the claim's time, vouches for.
+4. A key's history: the keys an identity has had, and when each was retired,
+   read by that rule.
+
 **historica-view (the page and the hub)**
 
-3. Targets: name a repository by its root revision and a file by its
+5. Targets: name a repository by its root revision and a file by its
    identifier, and resolve one back in a store.
-4. Owners in the path, and a fork as a copy under the contributor's name.
-5. Payloads kept once by digest in R2.
-6. Remark chains per account per repository, written by the hub from a form.
-7. The index, rebuilt from chains.
-8. Issues and Offers pages, and remarks on a passage from the Files page.
-9. Drop the Tasks page and the `prov` feature.
+6. Owners in the path, and a fork as a copy under the contributor's name.
+7. Payloads kept once by digest in R2.
+8. Remark chains per account per repository, written and signed in the page.
+9. The index, rebuilt from chains.
+10. Issues and Offers pages, and remarks on a passage from the Files page.
+11. Drop the Tasks page and the `prov` feature.
+12. Keys made in the browser, shown once, rotated or replaced, and signing
+    in the page.
+13. The owner's line from the minisign rule, in place of the shared-bookmark
+    accepted line.
+14. Private repositories: members, gated reads, gated forks and chains.
 
 **historica**
 
-Nothing found yet. Fetching a fork makes its tip held, and `carry` takes it.
-If the index wants to know which of an offer's revisions the owner's line
-already holds, that is a question the library answers today through
-`supersedes`.
+Nothing found yet. As of main (`8ae0f57`), fetching a fork makes its tip
+held, `log` marks it, `carry` takes it, and `Following::Rule` is where the
+minisign rule plugs in.
 
 ## Open questions
 
-1. **The owner's keys.** Does the hub register a minisign key per account,
-   so the fold and the review claims check against it, or does it vouch on
-   the owner's behalf with a key of its own? The first keeps the hub a
-   courier. The second is easier for someone with no key.
-2. **A closed issue when the owner is not the closer.** Can a reporter close
-   their own issue? The fold could count the root's writer as well as the
-   owner.
-3. **Who sees layers the owner has not kept.** Every reader, marked, as
-   proposed here, or only the owner until they keep it? The first is open by
-   default and is where spam lands.
-4. **Offers between forks.** An offer aimed at a fork rather than at the
-   repository is the same remark with a different target. Is the root target
-   enough to show it on both?
-5. **Private repositories.** Nothing here hides a repository. A private one
-   needs its forks and remark chains gated too, and the hub's static file
-   serving does not gate today.
+1. **A key on a second device.** The page keeps the secret key in one
+   browser. Is importing the saved key the only way to sign from another
+   device, or does the hub offer a way to carry it?
+2. **Kept by whom, for a fork.** An offer to a fork is addressed to the
+   fork's owner, who keeps layers of their own. Does the repository's page
+   show offers between forks at all, or only on the fork's page?
+3. **A reporter without an account.** Off the hub, anyone with a chain and a
+   key can remark. Does the hub index a chain registered by URL from someone
+   with no account, and under what limits?
 
 ## Not in this proposal
 
