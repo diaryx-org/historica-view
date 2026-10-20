@@ -8,7 +8,8 @@
 </head>
 <body>
 <!--
-  Signing in to the hub, choosing a handle, and the push keys push.sh sends.
+  Signing in to the hub, choosing a handle, and the push keys
+  `historica hub push` sends.
   A static page: every
   call is to better-auth under /api/auth/, which the hub's worker passes to the
   auth worker, so the session cookie is the hub's own.
@@ -48,9 +49,10 @@
 
     <h2>Push keys</h2>
     <p class="quiet">
-      push.sh sends one of these as <code>HUB_TOKEN</code>. Your first push
-      to a name under your handle makes that repository, private if you push
-      with <code>HUB_PRIVATE=1</code>, and only your keys can push to it after.
+      <code>historica hub login</code> keeps one of these, and
+      <code>historica hub push</code> sends it. Your first push to a name
+      under your handle makes that repository, private if you push with
+      <code>--private</code>, and only your keys can push to it after.
     </p>
     <div class="new-key" id="new-key" hidden>
       <p>Your new key. It is shown once, so copy it now:</p>
@@ -158,7 +160,7 @@ $("create-key").onsubmit = (event) => {
       $("new-key").hidden = false;
       $("new-key-value").textContent = created.key;
       $("new-key-command").textContent =
-        `HUB_TOKEN=${created.key} ./hub/push.sh <repository> ${location.origin} ${handle ?? "<handle>"}`;
+        `historica hub login ${location.origin}`;
       event.target.reset();
       return show();
     })
