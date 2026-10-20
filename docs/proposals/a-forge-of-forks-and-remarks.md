@@ -16,7 +16,9 @@ Draft. Adam made these choices:
 - A contribution is a fork, never a push into the maintainer's store.
 - A discussion is remarks, not prov documents. Prov leaves the forge
   entirely.
-- Every account has a minisign key of its own, which it can rotate or replace.
+- An account holds a minisign key per device, as GitHub holds SSH keys.
+- An offer between forks appears on the repository's page once someone
+  remarks on it there.
 - A reporter can close their own issue.
 - Private repositories are in scope.
 
@@ -94,7 +96,12 @@ Two things say where an offer goes, and they are different. The *target* is
 the project: the root every fork shares (see below). The *address* is whose
 copy the offer asks to be taken into. A layer is already addressed to one
 store, so an offer to the repository and an offer to somebody's fork are the
-same remark in two differently addressed chains. Amending the offer is a new
+same remark in two differently addressed chains.
+
+An offer between forks shows on the fork's page. It shows on the
+repository's page once somebody remarks on it in a chain addressed to the
+repository, so the repository sees the offers someone has brought to it,
+and not every exchange between forks. Amending the offer is a new
 revision of that remark. Withdrawing it is the contributor forgetting or
 abandoning it.
 
@@ -167,17 +174,22 @@ saw, which historica-remark already carries.
 
 ## Keys
 
-Every account has a minisign key. The hub can make one for the account, in
-the browser, so its secret part never reaches the hub. The page shows the
-secret key once, for the person to keep, and keeps it in the browser's own
-storage so the page can sign the remarks and claims the person writes there.
-The hub keeps only the public key.
+An account holds a minisign key for each device, the way a GitHub account
+holds SSH keys. A secret key never leaves the device it was made on, so
+nothing has to carry one.
 
-A person can rotate the key, or replace it with a public key of their own,
-proved by signing a challenge with it. The account keeps every key it has
-had, with when each was added and retired, so a claim made by a retired key
-still checks for what it signed before retirement. A key that leaked is
-retired as of a date the person names, and claims after it no longer count.
+The page can make a key for the browser it runs in, so the secret part never
+reaches the hub. It shows the secret key once, for the person to keep, and
+keeps it in the browser's own storage so the page can sign the remarks and
+claims written there. A person can also add a public key they made
+themselves, proved by signing a challenge with it, for the command line. The
+hub keeps only public keys.
+
+Each key keeps when it was added and when it was revoked. A claim made by a
+revoked key still checks for what it signed before revocation. A key that
+leaked is revoked as of a date the person names, and claims after it no
+longer count. Every key on the account counts as the account: the owner's
+line accepts what any of the owner's keys vouched for.
 
 ## The hub
 
@@ -239,8 +251,8 @@ The work, in roughly the order it can land. None of it is a deploy.
 9. The index, rebuilt from chains.
 10. Issues and Offers pages, and remarks on a passage from the Files page.
 11. Drop the Tasks page and the `prov` feature.
-12. Keys made in the browser, shown once, rotated or replaced, and signing
-    in the page.
+12. Keys per device: made in the browser and shown once, or added by public
+    key; revoked as of a date; signing in the page.
 13. The owner's line from the minisign rule, in place of the shared-bookmark
     accepted line.
 14. Private repositories: members, gated reads, gated forks and chains.
@@ -253,13 +265,7 @@ minisign rule plugs in.
 
 ## Open questions
 
-1. **A key on a second device.** The page keeps the secret key in one
-   browser. Is importing the saved key the only way to sign from another
-   device, or does the hub offer a way to carry it?
-2. **Kept by whom, for a fork.** An offer to a fork is addressed to the
-   fork's owner, who keeps layers of their own. Does the repository's page
-   show offers between forks at all, or only on the fork's page?
-3. **A reporter without an account.** Off the hub, anyone with a chain and a
+1. **A reporter without an account.** Off the hub, anyone with a chain and a
    key can remark. Does the hub index a chain registered by URL from someone
    with no account, and under what limits?
 
