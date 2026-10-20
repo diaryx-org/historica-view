@@ -1,8 +1,7 @@
-//! A Markdown document as a workspace keeps it: a frontmatter block and a
-//! body.
+//! A Markdown document: a frontmatter block and a body.
 //!
-//! prov's workspaces say what a document is in YAML between `---` lines at its
-//! top, and that block is all this reads of a document's structure. The body
+//! A document says what it is in YAML between `---` lines at its top, and
+//! that block is all this reads of a document's structure. The body
 //! is rendered to HTML for the page. Raw HTML in it is passed through, since a
 //! README that centres its logo in a `<div>` should look the way its author
 //! meant; a published repository is somebody else's writing, so the page runs

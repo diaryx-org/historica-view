@@ -4,10 +4,10 @@
 //! `repos/<slug>/`, plus `history.tar`, the copy's `history/` as one archive.
 //! The worker answers three kinds of request over that:
 //!
-//! - **Pages** — `/`, `/<slug>`, `/<slug>/tasks[/closed]`,
-//!   `/<slug>/tasks/<file>` — rendered here with `dioxus-ssr` from what the
-//!   repository's [`Repository`] Durable Object answers, with the data they
-//!   were rendered from in the document for the browser to take over from.
+//! - **Pages** — `/` and `/<slug>` — rendered here with `dioxus-ssr` from
+//!   what the repository's [`Repository`] Durable Object answers, with the
+//!   data they were rendered from in the document for the browser to take
+//!   over from.
 //!   `/api/page?path=…` is the same data alone, which is what the browser
 //!   fetches to move between pages.
 //! - **Files** — everything else under `/<slug>/`, and `/<slug>.git/…` —
@@ -102,7 +102,6 @@ async fn get(env: &Env, path: &str, parts: &[String], origin: &str) -> Result<Re
     let is_page = match parts {
         [only] if only.is_empty() => true,
         [slug] | [slug, _] if slug_ok(slug) && parts.get(1).is_none_or(String::is_empty) => true,
-        [slug, tasks, ..] if slug_ok(slug) && tasks == "tasks" && parts.len() <= 3 => true,
         _ => false,
     };
     if is_page {

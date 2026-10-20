@@ -153,16 +153,6 @@ impl Viewer {
         )
     }
 
-    /// Every task as `at` has it, as JSON.
-    pub fn tasks(&self, at: &str) -> Result<String, JsError> {
-        json(&self.view.tasks(at).map_err(fail)?)
-    }
-
-    /// One task with its body, as JSON, or `null`.
-    pub fn task(&self, at: &str, file: &str) -> Result<String, JsError> {
-        json(&self.view.task(at, file).map_err(fail)?)
-    }
-
     /// Every open proposal, with the claims over its tip checked, as JSON.
     pub fn proposals(&self) -> Result<String, JsError> {
         json(&self.view.proposals().map_err(fail)?)

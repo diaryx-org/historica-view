@@ -19,7 +19,7 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-pub use historica_view::workspace::{Overview, Task, TaskDetail};
+pub use historica_view::workspace::Overview;
 
 #[cfg(feature = "client")]
 mod client;
@@ -63,26 +63,14 @@ pub struct Listed {
 /// Everything one page shows.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "page", rename_all = "snake_case")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one page is held at a time; not `expect`, as the sizes differ by target"
+)]
 pub enum Page {
-    Home {
-        repositories: Vec<Listed>,
-    },
-    Overview {
-        repo: Repo,
-        overview: Overview,
-    },
-    Tasks {
-        repo: Repo,
-        tasks: Vec<Task>,
-        closed: bool,
-    },
-    Task {
-        repo: Repo,
-        task: TaskDetail,
-    },
-    Missing {
-        why: String,
-    },
+    Home { repositories: Vec<Listed> },
+    Overview { repo: Repo, overview: Overview },
+    Missing { why: String },
 }
 
 impl Page {
@@ -93,12 +81,6 @@ impl Page {
             Page::Overview { repo, overview } => {
                 overview.title.clone().unwrap_or_else(|| repo.slug.clone())
             }
-            Page::Tasks { repo, closed, .. } => format!(
-                "{} tasks · {}",
-                if *closed { "Closed" } else { "Open" },
-                repo.slug
-            ),
-            Page::Task { repo, task } => format!("{} · {}", task.task.title, repo.slug),
             Page::Missing { .. } => "Not here · historica hub".to_owned(),
         }
     }
@@ -124,7 +106,6 @@ pub fn App() -> Element {
                 nav { class: "repo-nav",
                     Link { to: "/{repo.slug}", class: "slug", "{repo.slug}" }
                     Link { to: "/{repo.slug}", "Overview" }
-                    Link { to: "/{repo.slug}/tasks", "Tasks" }
                     a { href: "/{repo.slug}/browse/#history/{repo.head.id}", "History" }
                     a { href: "/{repo.slug}/browse/#files/{repo.head.id}/d/", "Files" }
                 }
@@ -135,8 +116,6 @@ pub fn App() -> Element {
             match page {
                 Page::Home { repositories } => rsx! { Home { repositories } },
                 Page::Overview { repo, overview } => rsx! { RepoOverview { repo, overview } },
-                Page::Tasks { repo, tasks, closed } => rsx! { TaskList { repo, tasks, closed } },
-                Page::Task { repo, task } => rsx! { TaskPage { repo, task } },
                 Page::Missing { why } => rsx! {
                     h2 { "Not here" }
                     p { class: "quiet", "{why}" }
@@ -148,9 +127,7 @@ pub fn App() -> Element {
 
 fn repo_of(page: &Page) -> Option<&Repo> {
     match page {
-        Page::Overview { repo, .. } | Page::Tasks { repo, .. } | Page::Task { repo, .. } => {
-            Some(repo)
-        }
+        Page::Overview { repo, .. } => Some(repo),
         Page::Home { .. } | Page::Missing { .. } => None,
     }
 }
@@ -235,8 +212,6 @@ fn Command(label: String, text: String) -> Element {
 #[component]
 fn RepoOverview(repo: Repo, overview: Overview) -> Element {
     let title = overview.title.clone().unwrap_or_else(|| repo.slug.clone());
-    let open = overview.open_tasks;
-    let closed = overview.closed_tasks;
     rsx! {
         h2 { class: "repository", "{title}" }
         if let Some(description) = &overview.description {
@@ -244,9 +219,6 @@ fn RepoOverview(repo: Repo, overview: Overview) -> Element {
         }
         p { class: "facts",
             a { href: "/{repo.slug}/browse/#history/{repo.head.id}", "{repo.revisions} revisions" }
-            " · "
-            Link { to: "/{repo.slug}/tasks", "{open} open tasks" }
-            " · {closed} closed"
         }
         section { class: "clone",
             Command { label: "historica", text: "historica fetch {repo.origin}/{repo.slug}/offer.txt" }
@@ -264,78 +236,6 @@ fn RepoOverview(repo: Repo, overview: Overview) -> Element {
         } else {
             p { class: "quiet", "No README at this revision." }
         }
-    }
-}
-
-#[component]
-fn Status(task: Task) -> Element {
-    let state = if task.closed { "closed" } else { "open" };
-    rsx! {
-        span { class: "status {state} {task.status}", "{task.status}" }
-    }
-}
-
-#[component]
-fn TaskList(repo: Repo, tasks: Vec<Task>, closed: bool) -> Element {
-    let open_count = tasks.iter().filter(|task| !task.closed).count();
-    let closed_count = tasks.len() - open_count;
-    let shown: Vec<Task> = tasks
-        .into_iter()
-        .filter(|task| task.closed == closed)
-        .collect();
-    rsx! {
-        h2 { "Tasks" }
-        nav { class: "task-states",
-            Link { to: "/{repo.slug}/tasks", class: if closed { "" } else { "on" }, "{open_count} Open" }
-            Link { to: "/{repo.slug}/tasks/closed", class: if closed { "on" } else { "" }, "{closed_count} Closed" }
-        }
-        ul { class: "tasks",
-            if shown.is_empty() {
-                li { class: "quiet empty", if closed { "Nothing closed yet." } else { "Nothing open." } }
-            }
-            for task in shown {
-                li { key: "{task.file}",
-                    div { class: "task-title",
-                        Status { task: task.clone() }
-                        Link { to: "/{repo.slug}/tasks/{task.file}", "{task.title}" }
-                    }
-                    div { class: "quiet task-meta",
-                        "{day(task.created.as_deref().unwrap_or_default())}"
-                        if let Some(author) = &task.author { " · {author}" }
-                        " · "
-                        code { "{task.path}" }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn TaskPage(repo: Repo, task: TaskDetail) -> Element {
-    let html = task.html.clone();
-    let task = task.task;
-    let back = if task.closed { "closed" } else { "" };
-    rsx! {
-        p { class: "quiet",
-            Link { to: "/{repo.slug}/tasks/{back}", "← Tasks" }
-        }
-        h2 { class: "task-heading", "{task.title}" }
-        dl {
-            dt { "Status" }
-            dd { Status { task: task.clone() } }
-            if let Some(author) = &task.author {
-                dt { "Author" }
-                dd { "{author}" }
-            }
-            if let Some(created) = &task.created {
-                dt { "Created" }
-                dd { "{day(created)}" }
-            }
-            dt { "File" }
-            dd { a { href: "/{repo.slug}/browse/#files/{repo.head.id}/f/{task.file}", code { "{task.path}" } } }
-        }
-        article { class: "markdown", dangerous_inner_html: "{html}" }
     }
 }
 

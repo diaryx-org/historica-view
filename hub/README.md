@@ -1,11 +1,10 @@
 # historica hub
 
 A forge for Historica repositories on Cloudflare: a worker that renders each
-repository's front page and task tracker with Dioxus, a Dioxus client that
-takes the page over in the browser, R2 holding every repository as
-`../publish.sh` lays one out, a Durable Object per repository holding it
-open in memory, and a second worker running better-auth for accounts and
-push keys.
+repository's front page with Dioxus, a Dioxus client that takes the page over
+in the browser, R2 holding every repository as `../publish.sh` lays one out,
+a Durable Object per repository holding it open in memory, and a second
+worker running better-auth for accounts and push keys.
 
 A spike, kept apart from the page in its own workspace so it can be taken out
 whole.

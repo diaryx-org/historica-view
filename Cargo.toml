@@ -14,8 +14,8 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# A workspace's frontmatter, read with the parser historica-remark reads
-# remarks with. YAML only: it is what prov's workspaces write.
+# A README's frontmatter, read with the parser historica-remark reads
+# remarks with. YAML only: it is what a Markdown document's frontmatter is.
 fig = "7"
 fig-yaml = { version = "7", default-features = false, features = ["fig"] }
 # A registry version and no path, as historica-git has it: the view reaches
@@ -27,11 +27,7 @@ historica = { version = "1.0.0-rc.8", default-features = false }
 # through it, unused: the page still never touches a disk.
 historica-minisign = { version = "0.2", default-features = false }
 jiff = "0.2"
-# The task tracker, read as prov reads it. Optional, under `prov`: without it
-# the view is a history browser and has no tracker, which is all a store that
-# is not a prov workspace has anyway.
-prov = { git = "https://github.com/diaryx-org/prov", branch = "main", optional = true }
-# READMEs and tasks, rendered for the page; the page sanitises what comes out.
+# READMEs, rendered for the page; the page sanitises what comes out.
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -43,11 +39,9 @@ similar = "3.2"
 wasm-bindgen = { version = "=0.2.127", optional = true }
 
 [features]
-default = ["bindings", "prov"]
+default = ["bindings"]
 # The classes the page imports: `Files`, `Manifest` and `Viewer`.
 bindings = ["dep:wasm-bindgen"]
-# The task tracker, read by prov from the workspace the store's folder holds.
-prov = ["dep:prov"]
 
 # historica reaches getrandom for `record`, which the view never calls, but a
 # freestanding wasm build refuses to compile without a backend chosen.

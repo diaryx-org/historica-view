@@ -223,23 +223,8 @@ body[data-view="overview"] #left { display: none; }
 .markdown blockquote { margin: 0; padding: 0 14px; border-left: 3px solid var(--rule); color: var(--quiet); }
 .markdown a:not([href]) { color: inherit; text-decoration: underline dotted; }
 
-/* Tasks. */
-body[data-view="tasks"] main { grid-template-columns: minmax(320px, 0.8fr) minmax(480px, 1.4fr); }
-.task-states { display: flex; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--rule); position: sticky; top: 0; background: var(--background); }
-.task-states a { padding: 2px 10px; border-radius: 6px; color: var(--quiet); text-decoration: none; font-weight: 500; }
-.task-states a.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text); }
-.taskbox { flex: 1; overflow: auto; }
-.tasks { list-style: none; margin: 0; padding: 0; }
-.tasks li { padding: 8px 12px; border-bottom: 1px solid var(--rule); cursor: pointer; }
-.tasks li:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.tasks li.selected { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-.tasks li.empty { cursor: default; }
-.task-title { display: flex; gap: 8px; align-items: baseline; }
-.task-meta { font-size: 12px; margin-top: 2px; padding-left: 2px; }
+/* A claim's signature, checked. */
 .status { font-size: 11px; padding: 0 7px; border-radius: 9px; white-space: nowrap; flex: none; }
-.status.open { background: var(--insert); color: var(--insert-strong); }
-.status.closed { background: color-mix(in srgb, #8250df 16%, transparent); color: #8250df; }
-.status.dropped { background: color-mix(in srgb, var(--quiet) 18%, transparent); color: var(--quiet); }
 .status.verified { background: var(--insert); color: var(--insert-strong); }
 .status.refused { background: var(--delete); color: var(--delete-strong); }
 .loading { padding: 16px; }
