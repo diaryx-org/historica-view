@@ -135,6 +135,17 @@ repository's Durable Object or its listings, and what a private repository
 serves is `cache-control: private, no-store`, without the
 `access-control-allow-origin: *` a public one has.
 
+Every pushed file — the static view, the export, raw files, the manifest
+and the git mirror — is served with `content-security-policy: sandbox
+allow-scripts allow-popups` and `x-content-type-options: nosniff`. A page
+someone pushed runs in an opaque origin of its own: it cannot read the hub's
+cookies, and what it asks of the hub is a cross-site request, which the
+session cookie (`HttpOnly`, `SameSite=Lax`, set in `auth/src/auth.ts`) is
+not sent with. So a repository's HTML cannot act as its reader. The static
+view reads a public repository's files as any other origin does, by
+`access-control-allow-origin: *`. The hub's own pages, `/client/`,
+`/account/` and `/api/auth/` are not sandboxed.
+
 Today a reader is known by the hub's session cookie alone, so a private
 repository is readable in a member's browser, and not yet by
 `historica fetch` or `git clone`. `gate::reader` is where the other two ways
@@ -209,10 +220,13 @@ historica-hub` the first time, then `npm run deploy`.
 
 - **Reading a private repository without a browser**: the signed requests
   and tokens above.
-- **The static view is pushed bytes on the hub's own origin.** Any file of a
-  site is served from the hub's address, so a page pushed into one runs with
-  a signed-in reader's cookies. It wants a sandbox, or an origin of its own,
-  before strangers push.
+- **An origin of its own for what is pushed.** Pushed files are sandboxed on
+  the hub's address (above); serving them from a separate domain would hold
+  even where a browser ignores the sandbox, and is the stronger fix.
+- **The static view of a private repository.** Sandboxed, it reads the
+  repository's files from an opaque origin, which carries no session, so a
+  private repository's History and Files do not load there. Its front page,
+  rendered by the hub, does.
 - **Repository settings** beyond private and members: handing a repository
   over, renaming it, deleting it. A handle that is changed is free for
   another account to take, and with it the old addresses.

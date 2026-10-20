@@ -32,6 +32,8 @@
 //! [`gate::authorize_read`], and a private repository is answered as absent
 //! to whoever it refuses. What a private repository serves is marked
 //! `private, no-store`, so nothing between the hub and its reader keeps it.
+//! Every file is served sandboxed, so a page someone pushed runs in an
+//! origin of its own and never as the hub.
 //!
 //! The browser's half — the script, its wasm, the stylesheet — is the
 //! worker's static assets under `/client/`, which Cloudflare serves before the
@@ -198,8 +200,11 @@ fn document(page: &Page) -> String {
     )
 }
 
+/// The policy every pushed file is served under: scripts, but no origin.
+const SANDBOX: &str = "sandbox allow-scripts allow-popups";
+
 /// One file of a repository: the blob its listings name at that path, or its
-/// manifest.
+/// manifest. Served sandboxed, under [`SANDBOX`].
 async fn file(env: &Env, request: &Request, repo: &Named, within: &Within) -> Result<Response> {
     let Some(granted) = gate::authorize_read(env, request, repo).await? else {
         return Response::error("not here", 404);
@@ -234,6 +239,15 @@ async fn file(env: &Env, request: &Request, repo: &Named, within: &Within) -> Re
     let mut response = Response::from_bytes(bytes)?;
     let headers = response.headers_mut();
     headers.set("content-type", content_type(path))?;
+    // Every byte here was pushed by someone, and is served from the hub's
+    // own address. Sandboxed without `allow-same-origin`, a pushed page runs
+    // in an opaque origin: it cannot read the hub's cookies, and what it
+    // asks of the hub is a cross-site request, which a `SameSite=Lax`
+    // session cookie is not sent with. So a repository's HTML cannot act as
+    // its reader, on their private repositories or their keys. The static
+    // view still runs, and reads a public repository's files as any other
+    // origin does, by `access-control-allow-origin: *`.
+    headers.set("content-security-policy", SANDBOX)?;
     headers.set("x-content-type-options", "nosniff")?;
     headers.set("etag", &etag.unwrap_or_else(|| object.http_etag()))?;
     headers.set("cache-control", cache(granted.private()))?;

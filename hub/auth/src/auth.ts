@@ -47,6 +47,14 @@ export function hubAuth({ database, secret, baseURL, github }: Settings) {
     emailAndPassword: { enabled: true },
     socialProviders: github ? { github } : {},
     telemetry: { enabled: false },
+    // better-auth's defaults, stated, because the hub depends on them: the
+    // session cookie is unreadable to script, and is not sent with a
+    // request from another site. A pushed page runs sandboxed in an origin
+    // of its own (the worker's `SANDBOX`), so what it asks of the hub is
+    // such a request, and carries no session.
+    advanced: {
+      defaultCookieAttributes: { httpOnly: true, sameSite: "lax" },
+    },
     plugins: [
       // An account's handle, which its repositories are under. Lowercased
       // before it is checked, so `Ada` is `ada`; unique, as better-auth
