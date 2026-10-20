@@ -20,7 +20,8 @@ Draft. Adam made these choices:
 - An offer between forks appears on the repository's page once someone
   remarks on it there.
 - A reporter can close their own issue.
-- Private repositories are in scope.
+- Private repositories are in scope, read with the device keys.
+- The hub's spike layout at `/<slug>` is dropped, not migrated.
 
 The open questions at the end are not decided.
 
@@ -50,6 +51,8 @@ others yet.
 [0042]: https://github.com/diaryx-org/historica/blob/main/docs/decisions/0042-a-copy-to-take-away.md
 [0046]: https://github.com/diaryx-org/historica/blob/main/docs/decisions/0046-who-vouches-for-a-revision.md
 [0052]: https://github.com/diaryx-org/historica/blob/main/docs/decisions/0052-the-copy-a-stranger-fetches-from.md
+[0057]: https://github.com/diaryx-org/historica/blob/main/docs/decisions/0057-the-stack-a-fetch-rides-on.md
+[0072]: https://github.com/diaryx-org/historica/blob/main/docs/decisions/0072-a-command-this-tool-does-not-have.md
 [0086]: https://github.com/diaryx-org/historica/blob/main/docs/decisions/0086-a-copy-chooses-its-heads.md
 
 ## The rule
@@ -221,6 +224,16 @@ The hub stays what its README says, a courier with pages, and gains:
   Its forks are private to the same members and the fork's owner, and so is
   every remark chain addressed to it. Nothing private is served as a plain
   file, and the static view is built per request or behind the same check.
+- **Reading with a device key.** historica's fetch has no authentication
+  ([0057] defers it to the transport), and the device keys above are the
+  answer. `historica minisign fetch <url>` (a command of historica-minisign,
+  reached through historica's [0072]) fetches through a source that signs
+  each request: `Authorization: Minisign <key-id> <time> <signature>`, over
+  the method, host, path and time. The hub accepts a key registered to a
+  member, within a few minutes of the time it states. A copied header reads
+  one path, for minutes. The page signs with the key it keeps. `git clone`
+  cannot sign, so historica-git's credential helper signs a challenge for a
+  short-lived token, and the hub takes the token as a Basic password.
 
 ## What each repository builds
 
@@ -256,6 +269,16 @@ The work, in roughly the order it can land. None of it is a deploy.
 13. The owner's line from the minisign rule, in place of the shared-bookmark
     accepted line.
 14. Private repositories: members, gated reads, gated forks and chains.
+15. Signed reads: check the `Minisign` header, and mint short-lived tokens
+    for a signed challenge.
+
+**historica-minisign**, again
+
+16. Request signing, a signing `Source`, `fetch`, and the token client.
+
+**historica-git**
+
+17. A git credential helper that gets a token through historica-minisign.
 
 **historica**
 
