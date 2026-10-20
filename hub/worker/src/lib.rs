@@ -1,73 +1,84 @@
 //! The hub on Cloudflare.
 //!
-//! A repository is published to R2 as `publish.sh` lays a site out, under
-//! `repos/<slug>/`, plus `history.tar`, the copy's `history/` as one archive.
-//! The worker answers three kinds of request over that:
+//! A repository is `/<owner>/<slug>`: an account's handle, and a name among
+//! that account's repositories ([`route`]). What `publish.sh` lays out for
+//! one is kept in R2 by digest, once for every repository that serves it,
+//! and each repository has its own manifest and site listing saying which
+//! digest each of its paths is ([`site`]). Who owns a repository, who may
+//! read a private one, and which digests each holds are in D1 ([`db`]).
 //!
-//! - **Pages** — `/` and `/<slug>` — rendered here with `dioxus-ssr` from
-//!   what the repository's [`Repository`] Durable Object answers, with the
-//!   data they were rendered from in the document for the browser to take
-//!   over from.
-//!   `/api/page?path=…` is the same data alone, which is what the browser
-//!   fetches to move between pages.
-//! - **Files** — everything else under `/<slug>/`, and `/<slug>.git/…` —
-//!   served from R2 as stored. So `historica fetch <hub>/<slug>/offer.txt`
-//!   and `git clone <hub>/<slug>.git` read the bucket through the worker and
-//!   nothing in between knows what a revision is, and `/<slug>/browse/` is
-//!   the static view `publish.sh` put beside the copy, for History and Files.
-//! - **Pushes** — `PUT` and `DELETE /api/repos/<slug>/objects?path=…`, with
-//!   a push key as the bearer token, which `push.sh` sends. Each is checked
-//!   with the hub's auth worker, which says whether the key is one and
-//!   whether its owner holds the repository.
+//! The worker answers four kinds of request over that:
+//!
+//! - **Pages** — `/` and `/<owner>/<slug>` — rendered here with
+//!   `dioxus-ssr` from what the repository's [`Repository`] Durable Object
+//!   answers, with the data they were rendered from in the document for the
+//!   browser to take over from. `/api/page?path=…` is the same data alone,
+//!   which is what the browser fetches to move between pages.
+//! - **Files** — everything else under `/<owner>/<slug>/`, and
+//!   `/<owner>/<slug>.git/…` — each the blob that repository's listings name
+//!   at that path. So `historica fetch <hub>/<owner>/<slug>/offer.txt` and
+//!   `git clone <hub>/<owner>/<slug>.git` read the bucket through the worker
+//!   and nothing in between knows what a revision is, and
+//!   `/<owner>/<slug>/browse/` is the static view `publish.sh` put beside
+//!   the copy, for History and Files.
+//! - **Changes** — `/api/repos/<owner>/<slug>/…`: pushes, forks and members
+//!   ([`push`]), with a push key as the bearer token or a browser's session.
 //! - **Accounts** — `/api/auth/*`, passed as it came to the auth worker
 //!   (`../auth/`), which runs better-auth. That worker has no address of its
 //!   own: it is reached through the `AUTH` service binding, so its sign-ins
 //!   and cookies are under the hub's address.
 //!
+//! Every read of a repository, page or file, goes through one gate,
+//! [`gate::authorize_read`], and a private repository is answered as absent
+//! to whoever it refuses. What a private repository serves is marked
+//! `private, no-store`, so nothing between the hub and its reader keeps it.
+//! Every file is served sandboxed, so a page someone pushed runs in an
+//! origin of its own and never as the hub.
+//!
 //! The browser's half — the script, its wasm, the stylesheet — is the
 //! worker's static assets under `/client/`, which Cloudflare serves before the
-//! worker is asked, and so is `/account/`, where a reader signs in and makes
-//! push keys.
+//! worker is asked, and so is `/account/`, where a reader signs in, chooses
+//! a handle, and makes push keys.
 
 #![forbid(unsafe_code)]
 
+mod account;
+mod db;
+mod gate;
+mod push;
 mod repository;
+mod route;
+mod site;
 
 use dioxus::prelude::*;
 use historica_hub_app::{App, DATA, Listed, PAGE_API, Page, ROOT, embedded};
-use wasm_bindgen::JsValue;
-use worker::{Env, Headers, Method, Request, RequestInit, Response, Result, event};
+use worker::{Env, Method, Request, Response, Result, event};
+
+use crate::route::{Named, Route, Within};
+use crate::site::{Found, MANIFEST, blob};
 
 pub use repository::Repository;
 
 /// The R2 binding.
 pub(crate) const BUCKET: &str = "HUB";
 /// The Durable Object binding.
-const REPOSITORIES: &str = "REPOSITORY";
+pub(crate) const REPOSITORIES: &str = "REPOSITORY";
 /// The service binding to the auth worker.
-const AUTH: &str = "AUTH";
-/// The archive of a copy's `history/` that `push.sh` uploads beside it.
-pub(crate) const ARCHIVE: &str = "history.tar";
-
-/// Where a repository's files are in the bucket.
-pub(crate) fn prefix(slug: &str) -> String {
-    format!("repos/{slug}/")
-}
+pub(crate) const AUTH: &str = "AUTH";
 
 #[event(fetch)]
 async fn fetch(request: Request, env: Env, _context: worker::Context) -> Result<Response> {
     console_error_panic_hook::set_once();
     let url = request.url()?;
     let origin = url.origin().ascii_serialization();
-    let path = url.path().to_owned();
-    let parts: Vec<String> = path
-        .trim_start_matches('/')
-        .split('/')
-        .map(decode)
-        .collect();
+    let method = request.method();
+    let reading = matches!(method, Method::Get | Method::Head);
 
-    match (request.method(), parts.first().map(String::as_str)) {
-        (Method::Get, Some("api")) if path == PAGE_API => {
+    match Route::of(url.path()) {
+        Route::Auth => env.service(AUTH)?.fetch_request(request).await,
+        Route::Api { repo, rest } => push::answer(request, &env, &repo, &rest).await,
+        _ if !reading => Response::error("not a method the hub answers", 405),
+        Route::PageApi => {
             let Some(wanted) = url
                 .query_pairs()
                 .find(|(key, _)| key == "path")
@@ -75,131 +86,81 @@ async fn fetch(request: Request, env: Env, _context: worker::Context) -> Result<
             else {
                 return Response::error("path is wanted", 400);
             };
-            let page = resolve(&env, &wanted, &origin).await?;
-            Ok(Response::from_json(&page)?.with_status(status(&page)))
+            let (page, private) = resolve(&env, &request, &wanted, &origin).await?;
+            let mut response = Response::from_json(&page)?.with_status(status(&page));
+            response
+                .headers_mut()
+                .set("cache-control", cache(private))?;
+            Ok(response)
         }
-        (_, Some("api")) if path.starts_with("/api/auth/") => {
-            env.service(AUTH)?.fetch_request(request).await
+        Route::File { repo, within } => file(&env, &request, &repo, &within).await,
+        Route::Home | Route::Page { .. } | Route::NotHere => {
+            let (page, private) = resolve(&env, &request, url.path(), &origin).await?;
+            let mut response = Response::from_html(document(&page))?.with_status(status(&page));
+            response
+                .headers_mut()
+                .set("cache-control", cache(private))?;
+            Ok(response)
         }
-        (_, Some("api")) => push(request, &env, &parts).await,
-        (Method::Get | Method::Head, _) => get(&env, &path, &parts, &origin).await,
-        _ => Response::error("not a method the hub answers", 405),
     }
 }
 
-/// A `GET`: a page, or a file from the bucket.
-async fn get(env: &Env, path: &str, parts: &[String], origin: &str) -> Result<Response> {
-    let first = parts.first().map(String::as_str).unwrap_or_default();
-    if let Some(slug) = first.strip_suffix(".git")
-        && slug_ok(slug)
-    {
-        return file(
-            env,
-            &format!("{}{slug}.git/{}", prefix(slug), parts[1..].join("/")),
-        )
-        .await;
+/// What a page may be kept as: by nobody between the hub and the reader for
+/// a private repository's.
+fn cache(private: bool) -> &'static str {
+    if private {
+        "private, no-store"
+    } else {
+        "no-cache"
     }
-    let is_page = match parts {
-        [only] if only.is_empty() => true,
-        [slug] | [slug, _] if slug_ok(slug) && parts.get(1).is_none_or(String::is_empty) => true,
-        _ => false,
-    };
-    if is_page {
-        let page = resolve(env, path, origin).await?;
-        let html = document(&page);
-        let mut response = Response::from_html(html)?.with_status(status(&page));
-        response.headers_mut().set("cache-control", "no-cache")?;
-        return Ok(response);
-    }
-    let [slug, rest @ ..] = parts else {
-        return Response::error("not here", 404);
-    };
-    if !slug_ok(slug) {
-        return Response::error("not here", 404);
-    }
-    let key = match rest {
-        [browse, inner @ ..] if browse == "browse" => {
-            let inner = inner.join("/");
-            let inner = if inner.is_empty() {
-                "index.html".to_owned()
-            } else {
-                inner
-            };
-            format!("{}{inner}", prefix(slug))
+}
+
+/// The page at `path`, and whether it is a private repository's.
+async fn resolve(env: &Env, request: &Request, path: &str, origin: &str) -> Result<(Page, bool)> {
+    let repo = match Route::of(path) {
+        Route::Home => return Ok((home(env).await?, false)),
+        Route::Page { repo } => repo,
+        _ => {
+            return Ok((
+                Page::Missing {
+                    why: format!("{path} is not a page of the hub."),
+                },
+                false,
+            ));
         }
-        [raw, inner @ ..] if raw == "raw" => format!("{}{slug}/{}", prefix(slug), inner.join("/")),
-        _ => format!("{}{}", prefix(slug), rest.join("/")),
     };
-    file(env, &key).await
-}
-
-/// One object from the bucket, as stored.
-async fn file(env: &Env, key: &str) -> Result<Response> {
-    if key.split('/').any(|part| part == "..") {
-        return Response::error("not here", 404);
-    }
-    let bucket = env.bucket(BUCKET)?;
-    let Some(object) = bucket.get(key).execute().await? else {
-        return Response::error("not here", 404);
+    let Some(granted) = gate::authorize_read(env, request, &repo).await? else {
+        return Ok((absent(&repo), false));
     };
-    let Some(body) = object.body() else {
-        return Response::error("not here", 404);
-    };
-    let bytes = body.bytes().await?;
-    let mut response = Response::from_bytes(bytes)?;
-    let headers = response.headers_mut();
-    headers.set("content-type", content_type(key))?;
-    // A published copy is meant to be read from anywhere, including the
-    // static view pointed at it with `?offer=` from another host.
-    headers.set("access-control-allow-origin", "*")?;
-    headers.set("cache-control", "no-cache")?;
-    headers.set("etag", &object.http_etag())?;
-    Ok(response)
-}
-
-/// The page at `path`.
-async fn resolve(env: &Env, path: &str, origin: &str) -> Result<Page> {
-    let parts: Vec<&str> = path
-        .trim_matches('/')
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect();
-    let Some(slug) = parts.first() else {
-        return home(env).await;
-    };
-    if !slug_ok(slug) {
-        return Ok(Page::Missing {
-            why: format!("{path} is not a page of the hub."),
-        });
-    }
-    let stub = env
-        .durable_object(REPOSITORIES)?
-        .id_from_name(slug)?
-        .get_stub()?;
+    let row = granted.row();
     let asked = format!(
-        "https://repository/page?slug={}&path={}&origin={}",
-        encode(slug),
-        encode(path),
+        "https://repository/page?id={}&owner={}&slug={}&private={}&forked={}&origin={}",
+        granted.id(),
+        encode(&row.named.owner),
+        encode(&row.named.slug),
+        if row.private { "1" } else { "0" },
+        encode(row.forked_from.as_deref().unwrap_or_default()),
         encode(origin)
     );
-    let mut answered = stub.fetch_with_str(&asked).await?;
-    answered.json().await
+    let mut answered = granted.stub(env)?.fetch_with_str(&asked).await?;
+    Ok((answered.json().await?, granted.private()))
+}
+
+/// What a reader is told of a repository that is not there, or that they may
+/// not read: the same, so the second cannot be told from the first.
+fn absent(repo: &Named) -> Page {
+    Page::Missing {
+        why: format!("Nothing is published as {}.", repo.spelled()),
+    }
 }
 
 async fn home(env: &Env) -> Result<Page> {
-    let bucket = env.bucket(BUCKET)?;
-    let listed = bucket
-        .list()
-        .prefix("repos/")
-        .delimiter("/")
-        .execute()
-        .await?;
-    let repositories = listed
-        .delimited_prefixes()
+    let repositories = db::public(env)
+        .await?
         .into_iter()
-        .filter_map(|prefix| {
-            let slug = prefix.strip_prefix("repos/")?.strip_suffix('/')?.to_owned();
-            Some(Listed { slug })
+        .map(|named| Listed {
+            owner: named.owner,
+            slug: named.slug,
         })
         .collect();
     Ok(Page::Home { repositories })
@@ -239,95 +200,64 @@ fn document(page: &Page) -> String {
     )
 }
 
-/// A `PUT` or `DELETE` of one object of a repository, by `push.sh`.
-async fn push(mut request: Request, env: &Env, parts: &[String]) -> Result<Response> {
-    let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
-    let ["api", "repos", slug, "objects"] = parts.as_slice() else {
+/// The policy every pushed file is served under: scripts, but no origin.
+const SANDBOX: &str = "sandbox allow-scripts allow-popups";
+
+/// One file of a repository: the blob its listings name at that path, or its
+/// manifest. Served sandboxed, under [`SANDBOX`].
+async fn file(env: &Env, request: &Request, repo: &Named, within: &Within) -> Result<Response> {
+    let Some(granted) = gate::authorize_read(env, request, repo).await? else {
         return Response::error("not here", 404);
     };
-    let slug = slug.to_string();
-    if !slug_ok(&slug) {
-        return Response::error("not a name a repository can have", 400);
-    }
-    let Some(key) = request
-        .headers()
-        .get("authorization")?
-        .and_then(|value| value.strip_prefix("Bearer ").map(str::to_owned))
-    else {
-        return Response::error("a push needs a push key: make one at /account", 401);
+    let (kind, path) = match within {
+        Within::Site(path) => ("site", path),
+        Within::Raw(path) => ("raw", path),
+        Within::Git(path) => ("git", path),
     };
-    if let Some(refused) = authorize(env, &key, &slug).await? {
-        return Ok(refused);
+    let asked = format!(
+        "https://repository/file?id={}&kind={kind}&path={}",
+        granted.id(),
+        encode(path)
+    );
+    let mut answered = granted.stub(env)?.fetch_with_str(&asked).await?;
+    if answered.status_code() != 200 {
+        return Response::error("not here", 404);
     }
-    let url = request.url()?;
-    let Some(path) = url
-        .query_pairs()
-        .find(|(key, _)| key == "path")
-        .map(|(_, value)| value.into_owned())
-    else {
-        return Response::error("path is wanted", 400);
-    };
-    if path.is_empty()
-        || path.starts_with('/')
-        || path
-            .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
-    {
-        return Response::error("not a path within the repository", 400);
-    }
-    let key = format!("{}{path}", prefix(&slug));
+    let found: Found = answered.json().await?;
     let bucket = env.bucket(BUCKET)?;
-    match request.method() {
-        Method::Put => {
-            let bytes = request.bytes().await?;
-            bucket.put(&key, bytes).execute().await?;
-            Response::empty().map(|response| response.with_status(204))
-        }
-        Method::Delete => {
-            bucket.delete(&key).await?;
-            Response::empty().map(|response| response.with_status(204))
-        }
-        _ => Response::error("a push is a PUT or a DELETE", 405),
+    let (key, etag) = match &found {
+        Found::Manifest => (format!("{}{MANIFEST}", granted.prefix()), None),
+        Found::Blob(digest) => (blob(digest), Some(format!("\"{digest}\""))),
+    };
+    let Some(object) = bucket.get(&key).execute().await? else {
+        return Response::error("not here", 404);
+    };
+    let Some(body) = object.body() else {
+        return Response::error("not here", 404);
+    };
+    let bytes = body.bytes().await?;
+    let mut response = Response::from_bytes(bytes)?;
+    let headers = response.headers_mut();
+    headers.set("content-type", content_type(path))?;
+    // Every byte here was pushed by someone, and is served from the hub's
+    // own address. Sandboxed without `allow-same-origin`, a pushed page runs
+    // in an opaque origin: it cannot read the hub's cookies, and what it
+    // asks of the hub is a cross-site request, which a `SameSite=Lax`
+    // session cookie is not sent with. So a repository's HTML cannot act as
+    // its reader, on their private repositories or their keys. The static
+    // view still runs, and reads a public repository's files as any other
+    // origin does, by `access-control-allow-origin: *`.
+    headers.set("content-security-policy", SANDBOX)?;
+    headers.set("x-content-type-options", "nosniff")?;
+    headers.set("etag", &etag.unwrap_or_else(|| object.http_etag()))?;
+    headers.set("cache-control", cache(granted.private()))?;
+    if !granted.private() {
+        // A published copy is meant to be read from anywhere, including the
+        // static view pointed at it with `?offer=` from another host. A
+        // private one is read here, by a member, and nowhere else.
+        headers.set("access-control-allow-origin", "*")?;
     }
-}
-
-/// Whether `key` may push to `slug`, as the auth worker answers: `None` when
-/// it may, and the refusal to send back when it may not.
-async fn authorize(env: &Env, key: &str, slug: &str) -> Result<Option<Response>> {
-    let headers = Headers::new();
-    headers.set("content-type", "application/json")?;
-    let body = serde_json::json!({ "key": key, "slug": slug }).to_string();
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post)
-        .with_headers(headers)
-        .with_body(Some(JsValue::from_str(&body)));
-    let mut answer = env
-        .service(AUTH)?
-        .fetch("https://auth/internal/push", Some(init))
-        .await?;
-    match answer.status_code() {
-        204 => Ok(None),
-        status @ (400 | 401 | 403) => Response::error(answer.text().await?, status).map(Some),
-        status => {
-            let why = answer.text().await.unwrap_or_default();
-            Response::error(format!("the hub's accounts answered {status}: {why}"), 502).map(Some)
-        }
-    }
-}
-
-/// Whether `slug` can name a repository: a folder name, and not one of the
-/// hub's own.
-fn slug_ok(slug: &str) -> bool {
-    !slug.is_empty()
-        && slug.len() <= 100
-        && !slug.starts_with('.')
-        && !matches!(
-            slug,
-            "account" | "api" | "client" | "favicon.ico" | "robots.txt"
-        )
-        && slug
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    Ok(response)
 }
 
 fn content_type(key: &str) -> &'static str {

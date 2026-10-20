@@ -1,0 +1,93 @@
+# What ship needs to know about historica-view: its CI. It is not released or
+# published, so nothing here cuts a release; `ship ci` is the part it uses.
+name = historica-view
+url = https://github.com/diaryx-org/historica-view
+
+# CI. `.github/workflows/ci.yml` asks `ship ci --matrix` for these and runs one
+# per runner, as `ship ci <id>`; `ship ci` runs them all here, in this order,
+# with the same shell, and stops at the first that fails. Changing CI is an edit
+# here and nowhere else.
+#
+# A job is `id` (what `ship ci <id>` takes), `name` (the check GitHub shows as
+# `CI / <name>` — renaming it renames the required status check) and `run` (run
+# by `bash -eo pipefail -c` at the repository root). `runner` is the workflow's:
+# `components` are the rustup components it installs, and `builds = false` skips
+# restoring the cargo cache. Cheapest and most likely to fail first.
+#
+# Two Cargo workspaces: the view at the root, and the hub in `hub/`, which
+# resolves its own wasm-bindgen. Each job covers both.
+job
+> *
+> > id = fmt
+> > name = Format
+> > run = '''
+cargo fmt --all --check
+cargo fmt --all --check --manifest-path hub/Cargo.toml
+'''
+> > runner
+> > > components = rustfmt
+> > > builds = false
+> *
+> > # Warnings are errors in CI, so they are errors here too.
+> > id = clippy
+> > name = Clippy
+> > run = '''
+cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --manifest-path hub/Cargo.toml --workspace --all-targets -- -D warnings
+'''
+> > runner
+> > > components = clippy
+> *
+> > # The hub's default members, not `--workspace`: its client is for the
+> > # browser alone (hub/Cargo.toml).
+> > id = test
+> > name = Test
+> > run = '''
+cargo test --workspace
+cargo test --manifest-path hub/Cargo.toml
+'''
+> *
+> > # The auth worker's TypeScript, checked without deploying anything.
+> > id = auth
+> > name = Hub auth
+> > run = '''
+cd hub/auth
+npm ci
+npm run check
+'''
+> > runner
+> > > builds = false
+> *
+> > # The page, as publish.sh and push.sh want it in web/dist. The CLI must be
+> > # the wasm-bindgen Cargo.toml pins, and is installed only where it is not.
+> > id = page
+> > name = Page
+> > run = '''
+rustup target add wasm32-unknown-unknown
+want=$(sed -n 's/^wasm-bindgen = { version = "=\([^"]*\)".*/\1/p' Cargo.toml)
+[ "$(wasm-bindgen --version 2>/dev/null)" = "wasm-bindgen $want" ] ||
+  cargo install wasm-bindgen-cli --version "$want" --locked
+command -v pnpm >/dev/null || npm install -g pnpm
+cd web
+pnpm install --frozen-lockfile
+pnpm wasm
+pnpm build
+'''
+> *
+> > # The hub's client and worker, built as a deploy would build them, with
+> > # `--dry-run` so nothing is uploaded. The CLI must be the wasm-bindgen
+> > # hub/Cargo.lock resolves.
+> > id = hub
+> > name = Hub build
+> > run = '''
+rustup target add wasm32-unknown-unknown
+want=$(sed -n '/^name = "wasm-bindgen"$/{n;s/^version = "\(.*\)"$/\1/p;}' hub/Cargo.lock)
+[ "$(wasm-bindgen --version 2>/dev/null)" = "wasm-bindgen $want" ] ||
+  cargo install wasm-bindgen-cli --version "$want" --locked
+hub/build.sh
+cd hub/worker
+npm ci
+outdir=$(mktemp -d)
+trap 'rm -rf "$outdir"' EXIT
+npx wrangler deploy --dry-run --outdir "$outdir"
+'''
