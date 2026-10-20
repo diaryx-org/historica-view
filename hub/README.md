@@ -12,9 +12,9 @@ Kept apart from the page in its own workspace so it can be taken out whole.
 ## How it fits together
 
 ```
- push.sh ──PUT──▶ worker ──▶ R2  blobs/sha256/<digest>   every file, once, whoever pushed it
-                                 repos/<id>/offer.txt     a repository's manifest
-                                 repos/<id>/site.txt      its site listing: <digest> <path>
+ historica hub push ──PUT──▶ worker ──▶ R2  blobs/sha256/<digest>   every file, once, whoever pushed it
+                                            repos/<id>/offer.txt     a repository's manifest
+                                            repos/<id>/site.txt      its site listing: <digest> <path>
 
  browser ──GET /<owner>/<slug>──▶ worker ──gate──▶ Repository (Durable Object, one per repository)
                                     │        reads the manifest, its pages and the site
@@ -28,16 +28,21 @@ Kept apart from the page in its own workspace so it can be taken out whole.
                  every link after is GET /api/page?path=… rather than a load
 
  browser ──/api/auth/*──▶ worker ──AUTH──▶ auth worker (better-auth, D1)
- push.sh ──PUT──▶ worker ──AUTH──▶ POST /internal/key: whose push key is this?
-                    └──DB──▶ D1: who owns <owner>/<slug>, who may read it,
-                                 and which digests it holds
+ historica hub push ──PUT──▶ worker ──AUTH──▶ POST /internal/key: whose push key is this?
+                               └──DB──▶ D1: who owns <owner>/<slug>, who may read it,
+                                            and which digests it holds
 ```
 
 - **`app/`** is the pages: one set of Dioxus components, rendered by the
   worker and by the browser. The `client` feature is the browser's half —
   fetching the next page's data, the history buttons, the copy buttons.
 - **`client/`** is the browser's entry point, built to
-  `worker/public/client/` by `build.sh`.
+  `worker/public/client/` by `build.sh`, which also copies the static view,
+  `../web/dist`, to `worker/public/client/view/`. The worker serves that
+  one copy as every repository's `/<owner>/<slug>/browse/`, reading the
+  repository's files beside it.
+- **`cli/`** is `historica-hub`, which pushes: `historica hub login` and
+  `historica hub push` (below).
 - **`worker/`** is the worker: pages, files, the read gate, and the API for
   pushes, forks and members. `public/account/` is the page where a reader
   signs in, chooses a handle, and makes push keys.
@@ -121,8 +126,8 @@ theirs.
 
 ## Private repositories
 
-A repository is private when made with `{"private": true}`, as `push.sh`
-does under `HUB_PRIVATE=1`, or when its owner makes it so later. Its members
+A repository is private when made with `{"private": true}`, as
+`historica hub push --private` does, and `push.sh` under `HUB_PRIVATE=1`, or when its owner makes it so later. Its members
 are its owner, the accounts the owner adds, and, for a fork, the members of
 what it was forked from. A fork of a private repository is private, and
 cannot be made public while that repository is private.
@@ -170,14 +175,44 @@ The client renders afresh rather than hydrating, for the same reason:
 writes. The page data in the document is what stands in for it, and the
 markup the client draws is the markup the worker sent.
 
+## Pushing
+
+`historica-hub` is a program historica runs as `historica hub`, the way it
+runs `historica-git` as `historica git`. Install it, then make a push key at
+`<hub>/account/` and keep it:
+
+```console
+cargo install --locked --git https://github.com/diaryx-org/historica-view historica-hub
+historica hub login                    # or: historica hub login <hub>
+```
+
+and in a repository:
+
+```console
+historica hub push                     # <hub>/<your handle>/<folder name>
+historica hub push notes --private     # <hub>/<your handle>/notes, private
+```
+
+`push` writes the export and its paged manifest with `historica`, and the
+git mirror with `historica-git` and `git` where they are installed; without
+them the push says so, and `git clone` does not reach it. It keeps that copy
+between pushes, under the cache directory, and sends only the files the
+last push did not, with the manifest last. The static view is not sent: the
+hub serves its own. `HUB_TOKEN`, where it is set, is the key in place of
+the one kept. `historica hub help` has the rest.
+
+`push.sh`, from a checkout, pushes the same way with `curl`, and sends the
+static view too.
+
 ## Running it
 
 You need Rust with the `wasm32-unknown-unknown` target, the `wasm-bindgen`
-CLI at the version `Cargo.lock` resolves, Node, and — to push — `historica`,
-`historica-git` and `git` on `PATH` and a built page in `../web/dist`.
+CLI at the version `Cargo.lock` resolves, Node, pnpm, and a built page in
+`../web/dist`, which `build.sh` copies in.
 
 ```console
-./build.sh                                   # the client, into worker/public/client/
+pnpm --dir ../web install && pnpm --dir ../web wasm && pnpm --dir ../web build
+./build.sh                                   # the client and the view, into worker/public/client/
 (cd auth && npm install && cp .dev.vars.example .dev.vars)
 (cd auth && npx wrangler d1 migrations apply historica-hub-auth --local)
 cd worker && npm install
@@ -190,7 +225,9 @@ handle and make a push key at <http://localhost:8787/account/>, and from
 another shell:
 
 ```console
-HUB_TOKEN=hub_… ./hub/push.sh ~/some/repo http://localhost:8787 ada
+cargo install --locked --path cli
+historica hub login http://localhost:8787
+cd ~/some/repo && historica hub push
 ```
 
 Pushing again sends only what changed since the last push, and the

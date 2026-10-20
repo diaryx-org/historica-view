@@ -5,6 +5,7 @@
 /worker/.dev.vars
 /worker/public/client/historica_hub_client*
 /worker/public/client/snippets
+/worker/public/client/view
 /auth/node_modules
 /auth/.wrangler
 /auth/.dev.vars

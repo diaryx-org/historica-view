@@ -12,7 +12,10 @@
 	// Cloudflare serves a request for one of these before the worker is
 	// asked.
 	"assets": {
-		"directory": "./public"
+		"directory": "./public",
+		// The worker reads the static view through this, at
+		// /client/view/, to serve it as each repository's /browse/.
+		"binding": "ASSETS"
 	},
 	"r2_buckets": [
 		{

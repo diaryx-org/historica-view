@@ -75,15 +75,31 @@ pnpm build
 '''
 > *
 > > # The hub's client and worker, built as a deploy would build them, with
-> > # `--dry-run` so nothing is uploaded. The CLI must be the wasm-bindgen
-> > # hub/Cargo.lock resolves.
+> > # `--dry-run` so nothing is uploaded, and the page the worker serves as
+> > # every repository's /browse/. The page and the hub each want the
+> > # wasm-bindgen CLI their own lock resolves, so each version is put first
+> > # on PATH for its build, installed under $WASM_BINDGEN_ROOT (the cargo
+> > # home unless set) only where it is not already.
 > > id = hub
 > > name = Hub build
 > > run = '''
 rustup target add wasm32-unknown-unknown
-want=$(sed -n '/^name = "wasm-bindgen"$/{n;s/^version = "\(.*\)"$/\1/p;}' hub/Cargo.lock)
-[ "$(wasm-bindgen --version 2>/dev/null)" = "wasm-bindgen $want" ] ||
-  cargo install wasm-bindgen-cli --version "$want" --locked
+bindgen() {
+  [ "$(wasm-bindgen --version 2>/dev/null)" = "wasm-bindgen $1" ] && return
+  root="${WASM_BINDGEN_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/wasm-bindgen-$1"
+  [ -x "$root/bin/wasm-bindgen" ] ||
+    cargo install wasm-bindgen-cli --version "$1" --locked --root "$root"
+  PATH="$root/bin:$PATH"
+}
+command -v pnpm >/dev/null || npm install -g pnpm
+(
+  bindgen "$(sed -n 's/^wasm-bindgen = { version = "=\([^"]*\)".*/\1/p' Cargo.toml)"
+  cd web
+  pnpm install --frozen-lockfile
+  pnpm wasm
+  pnpm build
+)
+bindgen "$(sed -n '/^name = "wasm-bindgen"$/{n;s/^version = "\(.*\)"$/\1/p;}' hub/Cargo.lock)"
 hub/build.sh
 cd hub/worker
 npm ci
