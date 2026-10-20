@@ -915,6 +915,7 @@ dependencies = [
  "historica",
  "historica-hub-app",
  "historica-view",
+ "js-sys",
  "serde",
  "serde_json",
  "tar",

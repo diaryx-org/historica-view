@@ -8,7 +8,8 @@
 </head>
 <body>
 <!--
-  Signing in to the hub, and the push keys push.sh sends. A static page: every
+  Signing in to the hub, choosing a handle, and the push keys push.sh sends.
+  A static page: every
   call is to better-auth under /api/auth/, which the hub's worker passes to the
   auth worker, so the session cookie is the hub's own.
 -->
@@ -20,6 +21,7 @@
     <h2>Sign in</h2>
     <form class="account-form" id="sign-in">
       <input name="name" placeholder="Name (to create an account)" autocomplete="name">
+      <input name="username" placeholder="Handle (to create an account), as “ada”" autocomplete="username" maxlength="39">
       <input name="email" type="email" placeholder="Email" autocomplete="email" required>
       <input name="password" type="password" placeholder="Password" autocomplete="current-password" minlength="8" required>
       <div class="actions">
@@ -31,11 +33,24 @@
   </section>
 
   <section id="signed-in" hidden>
-    <h2>Push keys</h2>
+    <h2>Your handle</h2>
     <p class="quiet">Signed in as <span id="who"></span>. <button type="button" id="sign-out">Sign out</button></p>
     <p class="quiet">
-      push.sh sends one of these as <code>HUB_TOKEN</code>. A repository is
-      yours from your first push to it, and only your keys can push to it after.
+      Your repositories are at <code>/<span id="handle-shown">&lt;handle&gt;</span>/&lt;name&gt;</code>,
+      and a fork you make is under it too. A handle is lowercase letters,
+      digits and hyphens. Changing it moves every repository of yours to the
+      new one.
+    </p>
+    <form class="account-form" id="set-handle">
+      <input name="username" placeholder="Handle, as “ada”" required maxlength="39">
+      <div class="actions"><button type="submit">Set handle</button></div>
+    </form>
+
+    <h2>Push keys</h2>
+    <p class="quiet">
+      push.sh sends one of these as <code>HUB_TOKEN</code>. Your first push
+      to a name under your handle makes that repository, private if you push
+      with <code>HUB_PRIVATE=1</code>, and only your keys can push to it after.
     </p>
     <div class="new-key" id="new-key" hidden>
       <p>Your new key. It is shown once, so copy it now:</p>
@@ -72,6 +87,9 @@ async function call(path, body) {
   return answer;
 }
 
+/** The signed-in account's handle, once it has one. */
+let handle = null;
+
 function failed(error) {
   $("error").textContent = error.message;
 }
@@ -83,6 +101,9 @@ async function show() {
   $("signed-in").hidden = !session;
   if (!session) return;
   $("who").textContent = session.user.email;
+  handle = session.user.username ?? null;
+  $("handle-shown").textContent = handle ?? "<handle>";
+  $("set-handle").elements.username.value = handle ?? "";
   const listed = await call("api-key/list");
   const keys = Array.isArray(listed) ? listed : listed.apiKeys ?? [];
   const list = $("keys");
@@ -109,8 +130,9 @@ $("sign-in").onsubmit = (event) => {
   const password = form.get("password");
   const signUp = event.submitter?.value === "up";
   const name = form.get("name") || email.split("@")[0];
+  const username = form.get("username") || undefined;
   (signUp
-    ? call("sign-up/email", { name, email, password })
+    ? call("sign-up/email", { name, email, password, username })
     : call("sign-in/email", { email, password })
   ).then(show).catch(failed);
 };
@@ -122,6 +144,12 @@ $("github").onclick = () =>
 
 $("sign-out").onclick = () => call("sign-out", {}).then(show).catch(failed);
 
+$("set-handle").onsubmit = (event) => {
+  event.preventDefault();
+  const username = new FormData(event.target).get("username");
+  call("update-user", { username }).then(show).catch(failed);
+};
+
 $("create-key").onsubmit = (event) => {
   event.preventDefault();
   const name = new FormData(event.target).get("name");
@@ -130,7 +158,7 @@ $("create-key").onsubmit = (event) => {
       $("new-key").hidden = false;
       $("new-key-value").textContent = created.key;
       $("new-key-command").textContent =
-        `HUB_TOKEN=${created.key} ./hub/push.sh <repository> ${location.origin}`;
+        `HUB_TOKEN=${created.key} ./hub/push.sh <repository> ${location.origin} ${handle ?? "<handle>"}`;
       event.target.reset();
       return show();
     })

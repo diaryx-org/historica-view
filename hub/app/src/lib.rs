@@ -38,7 +38,13 @@ pub const DATA: &str = "hub-page";
 /// One repository, as every page about it shows it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Repo {
+    /// The handle of the account it belongs to.
+    pub owner: String,
     pub slug: String,
+    /// Whether only its members may read it.
+    pub private: bool,
+    /// What it was forked from, as `<owner>/<slug>`.
+    pub forked_from: Option<String>,
     /// The hub's own address, which the copy commands are spelled against.
     pub origin: String,
     pub revisions: usize,
@@ -57,7 +63,15 @@ pub struct Head {
 /// A repository the hub holds, as the front page lists it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Listed {
+    pub owner: String,
     pub slug: String,
+}
+
+impl Repo {
+    /// Where it is on the hub: `/<owner>/<slug>`.
+    pub fn path(&self) -> String {
+        format!("/{}/{}", self.owner, self.slug)
+    }
 }
 
 /// Everything one page shows.
@@ -78,9 +92,10 @@ impl Page {
     pub fn title(&self) -> String {
         match self {
             Page::Home { .. } => "historica hub".to_owned(),
-            Page::Overview { repo, overview } => {
-                overview.title.clone().unwrap_or_else(|| repo.slug.clone())
-            }
+            Page::Overview { repo, overview } => overview
+                .title
+                .clone()
+                .unwrap_or_else(|| format!("{}/{}", repo.owner, repo.slug)),
             Page::Missing { .. } => "Not here · historica hub".to_owned(),
         }
     }
@@ -104,10 +119,10 @@ pub fn App() -> Element {
             Link { to: "/", class: "brand", "historica hub" }
             if let Some(repo) = repo_of(&page) {
                 nav { class: "repo-nav",
-                    Link { to: "/{repo.slug}", class: "slug", "{repo.slug}" }
-                    Link { to: "/{repo.slug}", "Overview" }
-                    a { href: "/{repo.slug}/browse/#history/{repo.head.id}", "History" }
-                    a { href: "/{repo.slug}/browse/#files/{repo.head.id}/d/", "Files" }
+                    Link { to: "{repo.path()}", class: "slug", "{repo.owner}/{repo.slug}" }
+                    Link { to: "{repo.path()}", "Overview" }
+                    a { href: "{repo.path()}/browse/#history/{repo.head.id}", "History" }
+                    a { href: "{repo.path()}/browse/#files/{repo.head.id}/d/", "Files" }
                 }
             }
             a { href: "/account/", class: "account", "Account" }
@@ -168,7 +183,7 @@ fn Home(repositories: Vec<Listed>) -> Element {
         p { class: "quiet",
             "Each one a Historica repository, published with "
             code { "push.sh" }
-            ": readable at its address, fetchable with "
+            " under its owner's handle: readable at its address, fetchable with "
             code { "historica fetch" }
             " and clonable with "
             code { "git clone" }
@@ -179,8 +194,8 @@ fn Home(repositories: Vec<Listed>) -> Element {
         }
         ul { class: "listing",
             for listed in repositories {
-                li { key: "{listed.slug}",
-                    Link { to: "/{listed.slug}", "{listed.slug}" }
+                li { key: "{listed.owner}/{listed.slug}",
+                    Link { to: "/{listed.owner}/{listed.slug}", "{listed.owner}/{listed.slug}" }
                 }
             }
         }
@@ -211,21 +226,33 @@ fn Command(label: String, text: String) -> Element {
 
 #[component]
 fn RepoOverview(repo: Repo, overview: Overview) -> Element {
-    let title = overview.title.clone().unwrap_or_else(|| repo.slug.clone());
+    let title = overview
+        .title
+        .clone()
+        .unwrap_or_else(|| format!("{}/{}", repo.owner, repo.slug));
+    let path = repo.path();
     rsx! {
         h2 { class: "repository", "{title}" }
         if let Some(description) = &overview.description {
             p { class: "description", "{description}" }
         }
         p { class: "facts",
-            a { href: "/{repo.slug}/browse/#history/{repo.head.id}", "{repo.revisions} revisions" }
+            if repo.private {
+                span { class: "private", "Private · " }
+            }
+            if let Some(parent) = &repo.forked_from {
+                "Forked from "
+                Link { to: "/{parent}", "{parent}" }
+                " · "
+            }
+            a { href: "{path}/browse/#history/{repo.head.id}", "{repo.revisions} revisions" }
         }
         section { class: "clone",
-            Command { label: "historica", text: "historica fetch {repo.origin}/{repo.slug}/offer.txt" }
-            Command { label: "git", text: "git clone {repo.origin}/{repo.slug}.git" }
+            Command { label: "historica", text: "historica fetch {repo.origin}{path}/offer.txt" }
+            Command { label: "git", text: "git clone {repo.origin}{path}.git" }
         }
         p { class: "latest-revision",
-            a { href: "/{repo.slug}/browse/#history/{repo.head.id}", code { "{short(&repo.head.id)}" } }
+            a { href: "{path}/browse/#history/{repo.head.id}", code { "{short(&repo.head.id)}" } }
             " {repo.head.title} — {repo.head.author}, {day(&repo.head.when)}"
         }
         if let Some(readme) = &overview.readme {
