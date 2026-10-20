@@ -23,6 +23,12 @@ A repository that keeps [prov](https://github.com/diaryx-org/prov)'s
 documents, a task tracker among them, shows them in Files as it shows any
 other file. The view reads nothing as a tracker.
 
+A remark names what it is about by a target: `historica:<root>` for a
+repository, by the digest of the revision its history began with, which every
+fork shares, and `historica:<root>/<file>` for a file in it, by the
+identifier the file keeps through every move. `src/target.rs` argues which
+root names a store that holds several.
+
 A proposal's title is a convention, not anything historica defines: the
 `diaryx.change-set` header on its first revision where that says more than
 the bookmark's `<id>`, and otherwise the first line of that revision's
@@ -89,6 +95,7 @@ it open. It is a spike, in a workspace of its own.
 | `src/published.rs` | a published copy's manifest, whole or paged, and the files it lists |
 | `src/workspace.rs` | the README at a revision |
 | `src/proposals.rs` | the open proposals, and the claims over their tips |
+| `src/target.rs` | what a remark is about: a repository by its root revision, a file by its identifier |
 | `src/document.rs` | frontmatter, links between documents, and Markdown rendered to HTML |
 | `src/lib.rs` | those answers, spelled as JSON for the page |
 | `web/vite.config.ts` | the dev server that hands the page one local store |

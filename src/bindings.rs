@@ -4,6 +4,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::memory::Memory;
 use crate::published::{Published, verified};
+use crate::target::{InvalidTarget, Target};
 use crate::view::{self, ROOT, View};
 
 /// A store's files, gathered by the page before it opens a [`Viewer`].
@@ -153,6 +154,29 @@ impl Viewer {
         )
     }
 
+    /// The target naming this repository, or `file` in it, as a remark
+    /// carries it; `undefined` for a store with no revisions.
+    pub fn target(&self, file: Option<String>) -> Result<Option<String>, JsError> {
+        Ok(match file {
+            None => self.view.target().map(|target| target.to_string()),
+            Some(file) => Some(self.view.file_target(&file).map_err(fail)?.to_string()),
+        })
+    }
+
+    /// Whether `target` is about this store. A malformed target is an error.
+    pub fn answers(&self, target: &str) -> Result<bool, JsError> {
+        Ok(self.view.answers_to(&parse_target(target)?))
+    }
+
+    /// Where the file `target` names is as `at` has it, or `undefined` where
+    /// it is not in that folder.
+    #[wasm_bindgen(js_name = targetPath)]
+    pub fn target_path(&self, target: &str, at: &str) -> Result<Option<String>, JsError> {
+        self.view
+            .target_path(&parse_target(target)?, at)
+            .map_err(fail)
+    }
+
     /// Every open proposal, with the claims over its tip checked, as JSON.
     pub fn proposals(&self) -> Result<String, JsError> {
         json(&self.view.proposals().map_err(fail)?)
@@ -166,6 +190,12 @@ impl Viewer {
 
 fn fail(failure: view::Failure) -> JsError {
     JsError::new(&failure.0)
+}
+
+fn parse_target(target: &str) -> Result<Target, JsError> {
+    target
+        .parse()
+        .map_err(|error: InvalidTarget| JsError::new(&format!("{target}: {error}")))
 }
 
 fn json(value: &impl serde::Serialize) -> Result<String, JsError> {
