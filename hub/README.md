@@ -216,6 +216,21 @@ In `auth/`:
 Then in `worker/`, after `../build.sh`: `npx wrangler r2 bucket create
 historica-hub` the first time, then `npm run deploy`.
 
+To update a deployed hub, in the same order: the migrations first, since
+both workers read the tables they make, then the auth worker, then the hub's
+worker.
+
+```console
+./build.sh
+(cd auth && npx wrangler d1 migrations list historica-hub-auth --remote)
+(cd auth && npx wrangler d1 migrations apply historica-hub-auth --remote)
+(cd auth && npm run deploy)
+(cd worker && npm run deploy)
+```
+
+`migrations list` shows what `apply` would run; `ship ci hub` builds both
+workers with `--dry-run` and uploads nothing.
+
 ## Not yet
 
 - **Reading a private repository without a browser**: the signed requests
