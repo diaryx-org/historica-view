@@ -7,6 +7,10 @@
 [workspace]
 resolver = "3"
 members = ["app", "client", "worker"]
+# The client only builds for the browser, by build.sh. In a native `cargo
+# test` it would turn on app's `client` feature for the render tests too,
+# and they would call into wasm-bindgen outside a browser.
+default-members = ["app", "worker"]
 
 [workspace.package]
 version = "0.1.0"
