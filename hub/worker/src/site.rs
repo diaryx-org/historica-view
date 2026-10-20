@@ -109,6 +109,8 @@ impl Site {
             Within::Raw(path) => format!("{}/{path}", self.export),
             Within::Git(_) if self.export.is_empty() => return None,
             Within::Git(path) => format!("{}.git/{path}", self.export),
+            // The hub's own, never a repository's.
+            Within::View(_) => return None,
         };
         if path == MANIFEST {
             return Some(Found::Manifest);

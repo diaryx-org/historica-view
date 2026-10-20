@@ -9,11 +9,14 @@
 //! /<owner>/<slug>               its front page
 //! /<owner>/<slug>/<path>        a file of the published site: offer.txt,
 //!                               its pages, the export
-//! /<owner>/<slug>/browse/…      the static view, for History and Files
+//! /<owner>/<slug>/browse/…      the static view, for History and Files:
+//!                               the hub's own copy of the page, reading
+//!                               this repository's files beside it
 //! /<owner>/<slug>/raw/<path>    a file of the exported folder, as a
 //!                               README links to it
 //! /<owner>/<slug>.git/…         the git mirror, for `git clone`
 //! /api/repos/<owner>/<slug>/…   pushes, forks and members
+//! /api/account                  whose push key a request sends
 //! ```
 //!
 //! Nothing here reads a repository or asks who may: a route only names what
@@ -32,6 +35,9 @@ pub enum Route {
     PageApi,
     /// `/api/auth/…`: better-auth's, as it came.
     Auth,
+    /// `/api/account`: who the request is from, which is how a push tool
+    /// learns its key's handle.
+    AccountApi,
     /// `/api/repos/<owner>/<slug>/…`: a change to a repository.
     Api { repo: Named, rest: Vec<String> },
     /// `/<owner>/<slug>`: a repository's front page.
@@ -67,6 +73,18 @@ pub enum Within {
     Raw(String),
     /// A path within the git mirror.
     Git(String),
+    /// A file of the static view itself, `index.html` or under `assets/`,
+    /// which the hub serves from its own copy of the page for every
+    /// repository rather than from what was pushed.
+    View(String),
+}
+
+impl Within {
+    /// Whether `path`, under `browse/`, is the view's own: its page or one
+    /// of the assets `vite build` writes beside it.
+    fn view(path: &str) -> bool {
+        path == "index.html" || path.starts_with("assets/")
+    }
 }
 
 impl Route {
@@ -94,6 +112,7 @@ impl Route {
                 },
                 None => Route::NotHere,
             },
+            ["api", "account"] => Route::AccountApi,
             ["api", ..] => Route::NotHere,
             [owner, git, rest @ ..] if git.ends_with(".git") => {
                 let slug = &git[..git.len() - ".git".len()];
@@ -117,7 +136,8 @@ impl Route {
                     ["browse", inner_path @ ..] => {
                         let path = inner(inner_path);
                         match path.as_deref() {
-                            Some("") => Some(Within::Site("index.html".to_owned())),
+                            Some("") => Some(Within::View("index.html".to_owned())),
+                            Some(path) if Within::view(path) => Some(Within::View(path.to_owned())),
                             _ => path.map(Within::Site),
                         }
                     }
@@ -246,9 +266,23 @@ mod tests {
                 Within::Site("notes/history/revisions/2026-10/a b.rev.txt".into())
             )
         );
+        // The view is the hub's own; what it reads beside itself is the
+        // repository's.
         assert_eq!(
             Route::of("/ada/notes/browse/"),
-            file("ada", "notes", Within::Site("index.html".into()))
+            file("ada", "notes", Within::View("index.html".into()))
+        );
+        assert_eq!(
+            Route::of("/ada/notes/browse/assets/index-a1.js"),
+            file("ada", "notes", Within::View("assets/index-a1.js".into()))
+        );
+        assert_eq!(
+            Route::of("/ada/notes/browse/notes/history/historica.txt"),
+            file(
+                "ada",
+                "notes",
+                Within::Site("notes/history/historica.txt".into())
+            )
         );
         assert_eq!(
             Route::of("/ada/notes/browse/offer.txt"),
@@ -268,6 +302,7 @@ mod tests {
     fn the_api_names_a_repository_the_same_way() {
         assert_eq!(Route::of("/api/page"), Route::PageApi);
         assert_eq!(Route::of("/api/auth/get-session"), Route::Auth);
+        assert_eq!(Route::of("/api/account"), Route::AccountApi);
         assert_eq!(
             Route::of("/api/repos/ada/notes/fork"),
             Route::Api {

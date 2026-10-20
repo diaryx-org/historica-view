@@ -19,11 +19,14 @@
 //!   at that path. So `historica fetch <hub>/<owner>/<slug>/offer.txt` and
 //!   `git clone <hub>/<owner>/<slug>.git` read the bucket through the worker
 //!   and nothing in between knows what a revision is, and
-//!   `/<owner>/<slug>/browse/` is the static view `publish.sh` put beside
-//!   the copy, for History and Files.
+//!   `/<owner>/<slug>/browse/` is the static view, for History and Files:
+//!   the hub's own copy of the page, from its static assets under
+//!   `/client/view/`, reading the repository's files beside it.
 //! - **Changes** — `/api/repos/<owner>/<slug>/…`: pushes, forks and members
 //!   ([`push`]), with a push key as the bearer token or a browser's session.
-//! - **Accounts** — `/api/auth/*`, passed as it came to the auth worker
+//! - **Accounts** — `/api/account`, whose push key or session a request
+//!   carries, for a push tool to learn its handle; and `/api/auth/*`,
+//!   passed as it came to the auth worker
 //!   (`../auth/`), which runs better-auth. That worker has no address of its
 //!   own: it is reached through the `AUTH` service binding, so its sign-ins
 //!   and cookies are under the hub's address.
@@ -65,6 +68,8 @@ pub(crate) const BUCKET: &str = "HUB";
 pub(crate) const REPOSITORIES: &str = "REPOSITORY";
 /// The service binding to the auth worker.
 pub(crate) const AUTH: &str = "AUTH";
+/// The static assets binding: the browser's half, and the view.
+pub(crate) const ASSETS: &str = "ASSETS";
 
 #[event(fetch)]
 async fn fetch(request: Request, env: Env, _context: worker::Context) -> Result<Response> {
@@ -78,6 +83,15 @@ async fn fetch(request: Request, env: Env, _context: worker::Context) -> Result<
         Route::Auth => env.service(AUTH)?.fetch_request(request).await,
         Route::Api { repo, rest } => push::answer(request, &env, &repo, &rest).await,
         _ if !reading => Response::error("not a method the hub answers", 405),
+        Route::AccountApi => match account::of(&env, &request).await? {
+            Some(account) => Response::from_json(&serde_json::json!({
+                "username": account.username,
+            })),
+            None => Response::error(
+                "sign in, or send a push key as the bearer token: make one at /account",
+                401,
+            ),
+        },
         Route::PageApi => {
             let Some(wanted) = url
                 .query_pairs()
@@ -213,6 +227,7 @@ async fn file(env: &Env, request: &Request, repo: &Named, within: &Within) -> Re
         Within::Site(path) => ("site", path),
         Within::Raw(path) => ("raw", path),
         Within::Git(path) => ("git", path),
+        Within::View(path) => return view(env, path, granted.private()).await,
     };
     let asked = format!(
         "https://repository/file?id={}&kind={kind}&path={}",
@@ -257,6 +272,34 @@ async fn file(env: &Env, request: &Request, repo: &Named, within: &Within) -> Re
         // private one is read here, by a member, and nowhere else.
         headers.set("access-control-allow-origin", "*")?;
     }
+    Ok(response)
+}
+
+/// A file of the static view, from the hub's own copy of the page, which
+/// `build.sh` puts at `public/client/view/`. Under [`SANDBOX`] like a pushed
+/// file, so that the page reads a repository's files as it would from any
+/// other origin, and holds no session. Sandboxed, the page's origin is
+/// opaque, so its own script and wasm are cross-origin to it: they are the
+/// hub's code, the same for every repository, and readable from anywhere.
+async fn view(env: &Env, path: &str, private: bool) -> Result<Response> {
+    // The assets answer `/client/view/` for its index.html, and redirect a
+    // request that names the file.
+    let asked = match path {
+        "index.html" => "https://assets/client/view/".to_owned(),
+        path => format!("https://assets/client/view/{path}"),
+    };
+    let mut served = env.assets(ASSETS)?.fetch(asked, None).await?;
+    if served.status_code() != 200 {
+        return Response::error("not here", 404);
+    }
+    let bytes = served.bytes().await?;
+    let mut response = Response::from_bytes(bytes)?;
+    let headers = response.headers_mut();
+    headers.set("content-type", content_type(path))?;
+    headers.set("content-security-policy", SANDBOX)?;
+    headers.set("x-content-type-options", "nosniff")?;
+    headers.set("cache-control", cache(private))?;
+    headers.set("access-control-allow-origin", "*")?;
     Ok(response)
 }
 
