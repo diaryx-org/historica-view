@@ -90,6 +90,22 @@ impl Published {
         }
     }
 
+    /// Every page the manifest names, as `(path, digest)`: where it is,
+    /// relative to the manifest's directory, and what its bytes must hash
+    /// to. None for a whole listing.
+    ///
+    /// A host that keeps files by digest fetches a page by the second, and
+    /// [`Published::page`] still checks the bytes against it.
+    pub fn pages(&self) -> Vec<(String, String)> {
+        match &self.shape {
+            Shape::Whole(_) => Vec::new(),
+            Shape::Paged { refs, .. } => refs
+                .iter()
+                .map(|page| (page.path.clone(), page.digest.to_string()))
+                .collect(),
+        }
+    }
+
     /// Take one page the manifest names, refusing bytes that are not the
     /// page it named.
     pub fn page(&mut self, path: &str, bytes: &[u8]) -> Result<(), Failure> {

@@ -150,6 +150,10 @@ fn a_published_copy_reads_back_through_its_paged_manifest() {
     let mut published = Published::read(&text).expect("a manifest");
     let wanted = published.wanted();
     assert!(!wanted.is_empty(), "a paged manifest names its pages");
+    for (path, digest) in published.pages() {
+        assert!(wanted.contains(&path));
+        assert!(verified(&fs::read(site.join(&path)).unwrap(), &digest));
+    }
     for page in wanted {
         let bytes = fs::read(site.join(&page)).unwrap();
         published.page(&page, &bytes).expect("the page it named");
