@@ -23,12 +23,13 @@ publish = false
 [workspace.dependencies]
 # An alpha, as diaryx's own Dioxus spike takes it, pinned exactly so that one
 # alpha's breaking changes arrive as a deliberate bump.
-dioxus = { version = "=0.8.0-alpha.2", default-features = false, features = ["macro", "html", "signals", "hooks"] }
-dioxus-ssr = "=0.8.0-alpha.2"
-dioxus-web = { version = "=0.8.0-alpha.2", default-features = false, features = ["mounted"] }
+dioxus = { version = "=0.8.0-alpha.3", default-features = false, features = ["macro", "html", "signals", "hooks"] }
+dioxus-ssr = "=0.8.0-alpha.3"
+dioxus-web = { version = "=0.8.0-alpha.3", default-features = false, features = ["mounted"] }
 # The questions, without the page's bindings.
 historica-view = { path = "..", default-features = false }
 historica-hub-app = { path = "app" }
+unit = { git = "https://github.com/diaryx-org/unit", branch = "main" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

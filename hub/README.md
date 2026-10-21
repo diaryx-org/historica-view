@@ -34,8 +34,13 @@ Kept apart from the page in its own workspace so it can be taken out whole.
 ```
 
 - **`app/`** is the pages: one set of Dioxus components, rendered by the
-  worker and by the browser. The `client` feature is the browser's half —
-  fetching the next page's data, the history buttons, the copy buttons.
+  worker and by the browser, drawn with
+  [unit](https://github.com/diaryx-org/unit), the components Leaf and
+  Diaryx use. The `client` feature is the browser's half — fetching the
+  next page's data, the history buttons, the copy buttons, and the
+  account page's calls to better-auth. `app/src/hub.css` is the hub's own
+  styles over unit's, in unit's tokens; the worker serves the two as one
+  stylesheet at `/style.css?v=<its digest>`, which a browser keeps for good.
 - **`client/`** is the browser's entry point, built to
   `worker/public/client/` by `build.sh`, which also copies the static view,
   `../web/dist`, to `worker/public/client/view/`. The worker serves that
@@ -44,8 +49,9 @@ Kept apart from the page in its own workspace so it can be taken out whole.
 - **`cli/`** is `historica-hub`, which pushes: `historica hub login` and
   `historica hub push` (below).
 - **`worker/`** is the worker: pages, files, the read gate, and the API for
-  pushes, forks and members. `public/account/` is the page where a reader
-  signs in, chooses a handle, and makes push keys.
+  pushes, forks and members. `/account/`, where a reader signs in, chooses a
+  handle, and makes push keys, is one of its pages, rendered from the
+  reader's session like the rest.
 - **`auth/`** is the auth worker: better-auth over D1, with email and
   password sign-in, GitHub when the hub has an OAuth app, the `username`
   plugin for handles, and the `apiKey` plugin for push keys. It sends mail
@@ -172,6 +178,10 @@ and its server functions run on a tokio `LocalPoolHandle`, which wants
 threads. `dioxus-ssr` is runtime-agnostic, as
 [DioxusLabs/dioxus#1829](https://github.com/DioxusLabs/dioxus/issues/1829)
 says, and so is the client.
+
+unit needs nothing more than `dioxus` itself, so it renders through
+`dioxus-ssr` on the worker as it does in a browser; `UnitRoot` is told to
+leave its stylesheet out of the page, since the worker serves it.
 
 The client renders afresh rather than hydrating, for the same reason:
 `dioxus-web`'s `hydrate` reads the serialised context fullstack's server

@@ -38,10 +38,11 @@
 //! Every file is served sandboxed, so a page someone pushed runs in an
 //! origin of its own and never as the hub.
 //!
-//! The browser's half — the script, its wasm, the stylesheet — is the
-//! worker's static assets under `/client/`, which Cloudflare serves before the
-//! worker is asked, and so is `/account/`, where a reader signs in, chooses
-//! a handle, and makes push keys.
+//! The browser's half — the script and its wasm — is the worker's static
+//! assets under `/client/`, which Cloudflare serves before the worker is
+//! asked. The stylesheet, unit's and the hub's, is `/style.css`, built into
+//! the worker with the components it styles. `/account/`, where a reader
+//! signs in, chooses a handle, and makes push keys, is a page like the rest.
 
 #![forbid(unsafe_code)]
 
@@ -54,7 +55,10 @@ mod route;
 mod site;
 
 use dioxus::prelude::*;
-use historica_hub_app::{App, DATA, Listed, PAGE_API, Page, ROOT, embedded};
+use historica_hub_app::{
+    App, DATA, Listed, Me, PAGE_API, Page, ROOT, STYLESHEET, embedded, stylesheet,
+    stylesheet_version,
+};
 use worker::{Env, Method, Request, Response, Result, event};
 
 use crate::route::{Named, Route, Within};
@@ -107,7 +111,43 @@ async fn fetch(request: Request, env: Env, _context: worker::Context) -> Result<
                 .set("cache-control", cache(private))?;
             Ok(response)
         }
+        Route::Style => {
+            let mut response = Response::ok(stylesheet())?;
+            let headers = response.headers_mut();
+            headers.set("content-type", "text/css; charset=utf-8")?;
+            // Its address changes with it, so what was asked for at this
+            // version is this for good.
+            let current = url
+                .query_pairs()
+                .any(|(key, value)| key == "v" && value == stylesheet_version());
+            headers.set(
+                "cache-control",
+                if current {
+                    "public, max-age=31536000, immutable"
+                } else {
+                    "no-cache"
+                },
+            )?;
+            Ok(response)
+        }
         Route::File { repo, within } => file(&env, &request, &repo, &within).await,
+        Route::Account => {
+            let mut page = account_page(&env, &request, &origin).await?;
+            // What a link from the hub's mail came back with: `?token=` from
+            // a password reset, or `?error=` from a link that did not work.
+            if let Page::Account { reset, problem, .. } = &mut page {
+                for (key, value) in url.query_pairs() {
+                    match &*key {
+                        "token" => *reset = Some(value.into_owned()),
+                        "error" => *problem = Some(link_problem(&value)),
+                        _ => {}
+                    }
+                }
+            }
+            let mut response = Response::from_html(document(&page))?;
+            response.headers_mut().set("cache-control", cache(true))?;
+            Ok(response)
+        }
         Route::Home | Route::Page { .. } | Route::NotHere => {
             let (page, private) = resolve(&env, &request, url.path(), &origin).await?;
             let mut response = Response::from_html(document(&page))?.with_status(status(&page));
@@ -129,10 +169,12 @@ fn cache(private: bool) -> &'static str {
     }
 }
 
-/// The page at `path`, and whether it is a private repository's.
+/// The page at `path`, and whether it is a private repository's, or the
+/// reader's own account.
 async fn resolve(env: &Env, request: &Request, path: &str, origin: &str) -> Result<(Page, bool)> {
     let repo = match Route::of(path) {
         Route::Home => return Ok((home(env).await?, false)),
+        Route::Account => return Ok((account_page(env, request, origin).await?, true)),
         Route::Page { repo } => repo,
         _ => {
             return Ok((
@@ -168,6 +210,35 @@ fn absent(repo: &Named) -> Page {
     }
 }
 
+/// The account page for whoever `request`'s session is: their address,
+/// handle and push keys, or a sign-in.
+async fn account_page(env: &Env, request: &Request, origin: &str) -> Result<Page> {
+    let me = match account::by_session(env, request).await? {
+        Some(signed_in) => Some(Me {
+            email: signed_in.email.unwrap_or_default(),
+            handle: signed_in.username,
+            keys: account::keys(env, request).await?,
+        }),
+        None => None,
+    };
+    Ok(Page::Account {
+        me,
+        origin: origin.to_owned(),
+        reset: None,
+        problem: None,
+    })
+}
+
+/// What a mailed link's `?error=` says to the reader.
+fn link_problem(error: &str) -> String {
+    if error.eq_ignore_ascii_case("token_expired") {
+        "That link has expired. Sign in, or ask for a new reset link, to be sent another."
+    } else {
+        "That link did not work. Sign in, or ask for a new reset link, to be sent another."
+    }
+    .to_owned()
+}
+
 async fn home(env: &Env) -> Result<Page> {
     let repositories = db::public(env)
         .await?
@@ -195,6 +266,7 @@ fn document(page: &Page) -> String {
     let body = dioxus_ssr::render(&dom);
     let title = escape(&page.title());
     let data = embedded(page);
+    let version = stylesheet_version();
     format!(
         r#"<!doctype html>
 <html lang="en">
@@ -202,7 +274,7 @@ fn document(page: &Page) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
-<link rel="stylesheet" href="/client/style.css">
+<link rel="stylesheet" href="{STYLESHEET}?v={version}">
 </head>
 <body>
 <div id="{ROOT}">{body}</div>
