@@ -235,6 +235,10 @@ fn push(arguments: Vec<String>) -> Result<(), Failure> {
         )));
     }
 
+    eprintln!(
+        "historica hub: pushing {} to {hub}/{owner}/{slug}",
+        repository.display()
+    );
     let place = config::state()?
         .join(config::named(&hub))
         .join(&owner)
@@ -270,14 +274,30 @@ fn handle(client: &Hub, kept: Option<&config::Kept>) -> Result<String, Failure> 
     })
 }
 
-/// The repository this is run in: the nearest folder, here or above, with a
-/// store in `history/`.
+/// The repository this is run in.
 fn repository() -> Result<PathBuf, Failure> {
     let here = env::current_dir().map_err(Failure::error)?;
-    let mut at: &Path = &here;
+    store_above(&here)
+}
+
+/// The nearest folder, `here` or above, with a store in `history/`, looking
+/// no higher than the top of the git checkout `here` is in. A push publishes
+/// what it finds, so a checkout without a store of its own must not reach
+/// past itself to one that holds it, as a checkout inside a private folder
+/// would.
+fn store_above(here: &Path) -> Result<PathBuf, Failure> {
+    let mut at: &Path = here;
     loop {
         if at.join("history").join("historica.txt").is_file() {
             return Ok(at.to_path_buf());
+        }
+        if at.join(".git").exists() {
+            return Err(Failure::error(format!(
+                "no `history` directory in {} or above it in its git checkout, {}; \
+                 run `historica hub push` where the store is, or `historica init` to make one",
+                here.display(),
+                at.display()
+            )));
         }
         at = at.parent().ok_or_else(|| {
             Failure::error(format!(
@@ -285,5 +305,53 @@ fn repository() -> Result<PathBuf, Failure> {
                 here.display()
             ))
         })?;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// A fresh folder under the system's temporary directory, named for the
+    /// test and this process.
+    fn scratch(name: &str) -> PathBuf {
+        let path =
+            env::temp_dir().join(format!("agent-historica-hub-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn store(at: &Path) {
+        fs::create_dir_all(at.join("history")).unwrap();
+        fs::write(at.join("history/historica.txt"), "historica-1\n").unwrap();
+    }
+
+    #[test]
+    fn a_store_is_found_here_or_above_within_the_checkout() {
+        let root = scratch("above");
+        store(&root);
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::create_dir_all(root.join("notes/deeper")).unwrap();
+        assert_eq!(store_above(&root).unwrap(), root);
+        assert_eq!(store_above(&root.join("notes/deeper")).unwrap(), root);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_checkout_without_a_store_does_not_reach_the_one_around_it() {
+        // ~/org holds a store; ~/org/historica-view is a checkout of its own.
+        let root = scratch("nested");
+        store(&root);
+        fs::create_dir_all(root.join("view/.git")).unwrap();
+        fs::create_dir_all(root.join("view/src")).unwrap();
+        assert!(store_above(&root.join("view")).is_err());
+        assert!(store_above(&root.join("view/src")).is_err());
+        // A worktree's `.git` is a file, and it is a checkout all the same.
+        fs::create_dir_all(root.join("worktree")).unwrap();
+        fs::write(root.join("worktree/.git"), "gitdir: elsewhere\n").unwrap();
+        assert!(store_above(&root.join("worktree")).is_err());
+        fs::remove_dir_all(&root).unwrap();
     }
 }
