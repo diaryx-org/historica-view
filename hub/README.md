@@ -48,7 +48,10 @@ Kept apart from the page in its own workspace so it can be taken out whole.
   signs in, chooses a handle, and makes push keys.
 - **`auth/`** is the auth worker: better-auth over D1, with email and
   password sign-in, GitHub when the hub has an OAuth app, the `username`
-  plugin for handles, and the `apiKey` plugin for push keys. It has no
+  plugin for handles, and the `apiKey` plugin for push keys. It sends mail
+  through Cloudflare Email Sending's `send_email` binding: a link to verify
+  an address, without which an account cannot sign in or push, and a link
+  to reset a password. It has no
   address of its own. The hub's worker passes `/api/auth/*` to it through the
   `AUTH` service binding, so its cookies are the hub's, and asks it whose
   push key a push sends. The hub's worker binds the same D1 database for its
@@ -221,8 +224,10 @@ npx wrangler dev -c wrangler.jsonc -c ../auth/wrangler.jsonc
 
 One `wrangler dev` runs both workers, so the service binding between them
 resolves, and both bind the one local D1 database. Make an account, choose a
-handle and make a push key at <http://localhost:8787/account/>, and from
-another shell:
+handle and make a push key at <http://localhost:8787/account/>. `wrangler
+dev` sends no mail: it writes each message to a file and logs its path, so
+the link that verifies the account is in that file. Then, from another
+shell:
 
 ```console
 cargo install --locked --path cli
@@ -245,10 +250,14 @@ In `auth/`:
 3. `npx wrangler secret put BETTER_AUTH_SECRET`, a long random string. For
    GitHub sign-in, also `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` from an
    OAuth app whose callback is `<hub>/api/auth/callback/github`.
-4. `npx wrangler d1 migrations apply historica-hub-auth --remote`.
+4. Enable the domain of `EMAIL_FROM` in `wrangler.jsonc` for Email Sending
+   (`npx wrangler email sending enable <domain>`, and the DNS records it
+   names), and turn its **Email preview** off in the dashboard, so that
+   Cloudflare does not keep the messages: each one is a live link.
+5. `npx wrangler d1 migrations apply historica-hub-auth --remote`.
    `0003_owners.sql` drops the spike's repositories; their files under
    `repos/<slug>/` in R2 are not read again and can be deleted.
-5. `npm run deploy`.
+6. `npm run deploy`.
 
 Then in `worker/`, after `../build.sh`: `npx wrangler r2 bucket create
 historica-hub` the first time, then `npm run deploy`.
@@ -286,8 +295,6 @@ workers with `--dry-run` and uploads nothing.
   the API alone.
 - **The front page lists public repositories** only, not a member's private
   ones.
-- **Email verification and password reset.** better-auth has both, once the
-  hub can send mail.
 - **Hydration**, once Dioxus's server half builds for a worker, or by writing
   the hydration context the client reads.
 - **History and Files rendered by the hub**, rather than handed to the static

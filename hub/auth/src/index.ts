@@ -16,6 +16,7 @@
 //   hub's worker reads in D1 itself.
 
 import { hubAuth } from "./auth";
+import { mailer, type SendEmail } from "./mail";
 
 interface Env {
   DB: D1Database;
@@ -24,6 +25,9 @@ interface Env {
   BETTER_AUTH_URL: string;
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
+  /** Cloudflare Email Sending, and the address it sends from. */
+  EMAIL?: SendEmail;
+  EMAIL_FROM?: string;
 }
 
 function auth(env: Env) {
@@ -38,6 +42,8 @@ function auth(env: Env) {
             clientSecret: env.GITHUB_CLIENT_SECRET,
           }
         : undefined,
+    mail:
+      env.EMAIL && env.EMAIL_FROM ? mailer(env.EMAIL, env.EMAIL_FROM) : undefined,
   });
 }
 
@@ -71,12 +77,20 @@ async function key(request: Request, env: Env): Promise<Response> {
     );
   }
   const account = await env.DB.prepare(
-    `select "id", "username" from "user" where "id" = ?`,
+    `select "id", "username", "emailVerified" from "user" where "id" = ?`,
   )
     .bind(verified.key.referenceId)
-    .first<{ id: string; username: string | null }>();
+    .first<{ id: string; username: string | null; emailVerified: number }>();
   if (!account) {
     return new Response("that key's account is gone", { status: 401 });
   }
-  return Response.json(account);
+  // A key made before the hub sent mail pushes only once its account's
+  // address is verified, as a key made since could only be.
+  if (env.EMAIL && env.EMAIL_FROM && !account.emailVerified) {
+    return new Response(
+      "that key's account has not verified its email: sign in at /account to be sent a link",
+      { status: 401 },
+    );
+  }
+  return Response.json({ id: account.id, username: account.username });
 }
