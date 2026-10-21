@@ -192,15 +192,27 @@ historica hub login                    # or: historica hub login <hub>
 and in a repository:
 
 ```console
-historica hub push                     # <hub>/<your handle>/<folder name>
+historica hub push                     # <hub>/<your handle>/<folder name>, asked public or private
 historica hub push notes --private     # <hub>/<your handle>/notes, private
+historica hub push --public            # readable by anyone
 ```
+
+Every push says who may read it: `--public` for anyone, `--private` for you
+and the members you add. Without either, it asks at the terminal, and with no
+terminal to ask in, it pushes nothing. The flag sets an existing
+repository's visibility too.
+
+The repository is the nearest folder, here or above, with a store in
+`history/`, but `push` looks no higher than the top of the git checkout it is
+run in: a checkout without a store of its own is refused rather than pushed
+as part of a folder around it. It names the folder it pushes before it
+sends anything.
 
 `push` writes the export and its paged manifest with `historica`, and the
 git mirror with `historica-git` and `git` where they are installed; without
 them the push says so, and `git clone` does not reach it. It keeps that copy
 between pushes, under the cache directory, and sends only the files the
-last push did not, with the manifest last. The static view is not sent: the
+last push did not, eight at a time, with the manifest last. The static view is not sent: the
 hub serves its own. `HUB_TOKEN`, where it is set, is the key in place of
 the one kept. `historica hub help` has the rest.
 
@@ -232,7 +244,7 @@ shell:
 ```console
 cargo install --locked --path cli
 historica hub login http://localhost:8787
-cd ~/some/repo && historica hub push
+cd ~/some/repo && historica hub push --private
 ```
 
 Pushing again sends only what changed since the last push, and the

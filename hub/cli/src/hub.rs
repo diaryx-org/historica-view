@@ -11,11 +11,14 @@
 //! where the hub answers 409, lacking something this remembers sending, the
 //! push sends everything again, once.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io::Write as _;
 use std::path::Path;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 
 use serde::Deserialize;
 use ureq::Agent;
@@ -61,6 +64,8 @@ impl Hub {
     pub fn new(base: &str, key: &str) -> Self {
         let agent: Agent = Agent::config_builder()
             .http_status_as_error(false)
+            // A connection for each file sent at once, kept between files.
+            .max_idle_connections_per_host(AT_ONCE)
             .build()
             .into();
         Hub {
@@ -167,16 +172,14 @@ pub fn push(
     let api = format!("/api/repos/{owner}/{slug}");
     let remembered = place.join("sent");
 
-    // Make the repository, or check it is ours.
-    if private {
-        hub.call(
-            "PUT",
-            &api,
-            Some(("application/json", br#"{"private":true}"#)),
-        )?;
+    // Make the repository, or check it is ours, and make it as private as
+    // this push says.
+    let settings: &[u8] = if private {
+        br#"{"private":true}"#
     } else {
-        hub.call("PUT", &api, None)?;
-    }
+        br#"{"private":false}"#
+    };
+    hub.call("PUT", &api, Some(("application/json", settings)))?;
 
     let mut sent: BTreeSet<String> = fs::read_to_string(&remembered)
         .map(|text| text.lines().map(str::to_owned).collect())
@@ -221,9 +224,15 @@ pub fn push(
     Ok(uploaded)
 }
 
+/// How many files a push sends at once. Each request waits on the hub's
+/// database and bucket far longer than on the network, so one after another
+/// a push of a few hundred files takes minutes.
+const AT_ONCE: usize = 8;
+
 /// Send the bytes of every file of `built` whose digest is not in `sent`,
-/// each digest once, adding each to `sent` and to `remembered` as it goes,
-/// so a push stopped halfway does not send them again.
+/// each digest once and [`AT_ONCE`] at a time, adding each to `sent` and to
+/// `remembered` as it goes, so a push stopped halfway does not send them
+/// again.
 fn blobs(
     hub: &Hub,
     api: &str,
@@ -231,27 +240,63 @@ fn blobs(
     sent: &mut BTreeSet<String>,
     remembered: &Path,
 ) -> Result<usize, Refused> {
-    let mut log = fs::OpenOptions::new()
+    let log = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(remembered)
         .map_err(|error| Refused::other(format!("{}: {error}", remembered.display())))?;
-    let mut uploaded = 0;
+    let mut pending: BTreeMap<&str, &str> = BTreeMap::new();
     for (path, digest) in &built.listing {
-        if sent.contains(digest) {
-            continue;
+        if !sent.contains(digest) {
+            pending.entry(digest).or_insert(path);
         }
-        let bytes = fs::read(built.site.join(path))
-            .map_err(|error| Refused::other(format!("{path}: {error}")))?;
-        hub.call(
-            "PUT",
-            &format!("{api}/blobs/{digest}"),
-            Some(("application/octet-stream", &bytes)),
-        )?;
-        writeln!(log, "{digest}")
-            .map_err(|error| Refused::other(format!("{}: {error}", remembered.display())))?;
-        sent.insert(digest.clone());
-        uploaded += 1;
     }
+    let pending: Vec<(&str, &str)> = pending.into_iter().collect();
+    let next = AtomicUsize::new(0);
+    let log = Mutex::new(log);
+    let done: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let failed: Mutex<Option<Refused>> = Mutex::new(None);
+
+    thread::scope(|scope| {
+        for _ in 0..AT_ONCE.min(pending.len()) {
+            scope.spawn(|| {
+                while failed.lock().expect("not poisoned").is_none() {
+                    let Some(&(digest, path)) = pending.get(next.fetch_add(1, Ordering::Relaxed))
+                    else {
+                        break;
+                    };
+                    let one = fs::read(built.site.join(path))
+                        .map_err(|error| Refused::other(format!("{path}: {error}")))
+                        .and_then(|bytes| {
+                            hub.call(
+                                "PUT",
+                                &format!("{api}/blobs/{digest}"),
+                                Some(("application/octet-stream", &bytes)),
+                            )
+                        })
+                        .and_then(|()| {
+                            writeln!(log.lock().expect("not poisoned"), "{digest}").map_err(
+                                |error| {
+                                    Refused::other(format!("{}: {error}", remembered.display()))
+                                },
+                            )
+                        });
+                    match one {
+                        Ok(()) => done.lock().expect("not poisoned").push(digest.to_owned()),
+                        Err(refused) => {
+                            failed.lock().expect("not poisoned").get_or_insert(refused);
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    if let Some(refused) = failed.into_inner().expect("not poisoned") {
+        return Err(refused);
+    }
+    let done = done.into_inner().expect("not poisoned");
+    let uploaded = done.len();
+    sent.extend(done);
     Ok(uploaded)
 }

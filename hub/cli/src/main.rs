@@ -36,12 +36,16 @@ usage: historica hub <command> [<arguments>]
                            make one at <hub>/account/. <hub> is the last
                            one logged in to, or the hub's own address
   logout [<hub>]           forget the key kept for <hub>
-  push [[<owner>/]<slug>] [--hub <hub>] [--private] [--target <target>]
+  push [[<owner>/]<slug>] (--public | --private) [--hub <hub>]
+       [--target <target>]
                            publish this repository at <hub>/<owner>/<slug>:
                            <owner> is your handle and <slug> the folder's
                            name unless given. the first push makes the
-                           repository, private with --private. <target> is
-                           what to publish, `head` unless given. needs
+                           repository. --public lets anyone read it and
+                           --private only you and its members; each push
+                           says which, and is asked at a terminal where it
+                           does not. <target> is what to publish, `head`
+                           unless given. needs
                            `historica` on PATH, and `historica-git` and `git`
                            for the git mirror, which is left out without them
 
@@ -171,7 +175,7 @@ fn logout(arguments: Vec<String>) -> Result<(), Failure> {
 fn push(arguments: Vec<String>) -> Result<(), Failure> {
     let mut named: Option<String> = None;
     let mut hub: Option<String> = None;
-    let mut private = false;
+    let mut private: Option<bool> = None;
     let mut target = "head".to_owned();
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -182,7 +186,15 @@ fn push(arguments: Vec<String>) -> Result<(), Failure> {
                     .ok_or_else(|| Failure::Usage("`--hub` wants a hub's address".into()))?;
                 hub = Some(address(&given)?);
             }
-            "--private" => private = true,
+            flag @ ("--public" | "--private") => {
+                let chosen = flag == "--private";
+                if private.is_some_and(|private| private != chosen) {
+                    return Err(Failure::Usage(
+                        "`push` takes `--public` or `--private`, not both".into(),
+                    ));
+                }
+                private = Some(chosen);
+            }
             "--target" => {
                 target = arguments
                     .next()
@@ -200,6 +212,13 @@ fn push(arguments: Vec<String>) -> Result<(), Failure> {
                 )));
             }
         }
+    }
+
+    if private.is_none() && !io::stdin().is_terminal() {
+        return Err(Failure::Usage(
+            "say who may read the push: `--public` for anyone, `--private` for you and its members"
+                .into(),
+        ));
     }
 
     let config = Config::read()?;
@@ -235,6 +254,15 @@ fn push(arguments: Vec<String>) -> Result<(), Failure> {
         )));
     }
 
+    let private = match private {
+        Some(private) => private,
+        None => visibility(&repository, &format!("{hub}/{owner}/{slug}"))?,
+    };
+    eprintln!(
+        "historica hub: pushing {} to {hub}/{owner}/{slug}, {}",
+        repository.display(),
+        if private { "private" } else { "public" }
+    );
     let place = config::state()?
         .join(config::named(&hub))
         .join(&owner)
@@ -256,6 +284,33 @@ fn push(arguments: Vec<String>) -> Result<(), Failure> {
     Ok(())
 }
 
+/// Whether the push of `repository` to `at` is private, asked at the
+/// terminal: a push says who may read what it publishes, and with no
+/// terminal to ask in, `--public` or `--private` says it, as [`push`] checks
+/// before anything else.
+fn visibility(repository: &Path, at: &str) -> Result<bool, Failure> {
+    eprint!(
+        "push {} to {at}, readable by anyone (public) or by you and its members (private)? ",
+        repository.display()
+    );
+    let mut answer = String::new();
+    io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| Failure::error(format!("reading the answer: {error}")))?;
+    chosen(&answer)
+        .ok_or_else(|| Failure::error("nothing was pushed: answer `public` or `private`"))
+}
+
+/// An answer to [`visibility`]: whether it says private, or `None` where it
+/// says neither.
+fn chosen(answer: &str) -> Option<bool> {
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "public" => Some(false),
+        "private" => Some(true),
+        _ => None,
+    }
+}
+
 /// The account's handle: as kept at login, or else asked of the hub, which
 /// is how a key given as HUB_TOKEN is known.
 fn handle(client: &Hub, kept: Option<&config::Kept>) -> Result<String, Failure> {
@@ -270,14 +325,30 @@ fn handle(client: &Hub, kept: Option<&config::Kept>) -> Result<String, Failure> 
     })
 }
 
-/// The repository this is run in: the nearest folder, here or above, with a
-/// store in `history/`.
+/// The repository this is run in.
 fn repository() -> Result<PathBuf, Failure> {
     let here = env::current_dir().map_err(Failure::error)?;
-    let mut at: &Path = &here;
+    store_above(&here)
+}
+
+/// The nearest folder, `here` or above, with a store in `history/`, looking
+/// no higher than the top of the git checkout `here` is in. A push publishes
+/// what it finds, so a checkout without a store of its own must not reach
+/// past itself to one that holds it, as a checkout inside a private folder
+/// would.
+fn store_above(here: &Path) -> Result<PathBuf, Failure> {
+    let mut at: &Path = here;
     loop {
         if at.join("history").join("historica.txt").is_file() {
             return Ok(at.to_path_buf());
+        }
+        if at.join(".git").exists() {
+            return Err(Failure::error(format!(
+                "no `history` directory in {} or above it in its git checkout, {}; \
+                 run `historica hub push` where the store is, or `historica init` to make one",
+                here.display(),
+                at.display()
+            )));
         }
         at = at.parent().ok_or_else(|| {
             Failure::error(format!(
@@ -285,5 +356,62 @@ fn repository() -> Result<PathBuf, Failure> {
                 here.display()
             ))
         })?;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// A fresh folder under the system's temporary directory, named for the
+    /// test and this process.
+    fn scratch(name: &str) -> PathBuf {
+        let path =
+            env::temp_dir().join(format!("agent-historica-hub-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn store(at: &Path) {
+        fs::create_dir_all(at.join("history")).unwrap();
+        fs::write(at.join("history/historica.txt"), "historica-1\n").unwrap();
+    }
+
+    #[test]
+    fn only_a_whole_word_chooses_who_may_read() {
+        assert_eq!(chosen("public\n"), Some(false));
+        assert_eq!(chosen(" Private \n"), Some(true));
+        assert_eq!(chosen("\n"), None);
+        assert_eq!(chosen("y\n"), None);
+        assert_eq!(chosen("pub\n"), None);
+    }
+
+    #[test]
+    fn a_store_is_found_here_or_above_within_the_checkout() {
+        let root = scratch("above");
+        store(&root);
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::create_dir_all(root.join("notes/deeper")).unwrap();
+        assert_eq!(store_above(&root).unwrap(), root);
+        assert_eq!(store_above(&root.join("notes/deeper")).unwrap(), root);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_checkout_without_a_store_does_not_reach_the_one_around_it() {
+        // ~/org holds a store; ~/org/historica-view is a checkout of its own.
+        let root = scratch("nested");
+        store(&root);
+        fs::create_dir_all(root.join("view/.git")).unwrap();
+        fs::create_dir_all(root.join("view/src")).unwrap();
+        assert!(store_above(&root.join("view")).is_err());
+        assert!(store_above(&root.join("view/src")).is_err());
+        // A worktree's `.git` is a file, and it is a checkout all the same.
+        fs::create_dir_all(root.join("worktree")).unwrap();
+        fs::write(root.join("worktree/.git"), "gitdir: elsewhere\n").unwrap();
+        assert!(store_above(&root.join("worktree")).is_err());
+        fs::remove_dir_all(&root).unwrap();
     }
 }
