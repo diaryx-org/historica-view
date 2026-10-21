@@ -36,12 +36,16 @@ usage: historica hub <command> [<arguments>]
                            make one at <hub>/account/. <hub> is the last
                            one logged in to, or the hub's own address
   logout [<hub>]           forget the key kept for <hub>
-  push [[<owner>/]<slug>] [--hub <hub>] [--private] [--target <target>]
+  push [[<owner>/]<slug>] (--public | --private) [--hub <hub>]
+       [--target <target>]
                            publish this repository at <hub>/<owner>/<slug>:
                            <owner> is your handle and <slug> the folder's
                            name unless given. the first push makes the
-                           repository, private with --private. <target> is
-                           what to publish, `head` unless given. needs
+                           repository. --public lets anyone read it and
+                           --private only you and its members; each push
+                           says which, and is asked at a terminal where it
+                           does not. <target> is what to publish, `head`
+                           unless given. needs
                            `historica` on PATH, and `historica-git` and `git`
                            for the git mirror, which is left out without them
 
@@ -171,7 +175,7 @@ fn logout(arguments: Vec<String>) -> Result<(), Failure> {
 fn push(arguments: Vec<String>) -> Result<(), Failure> {
     let mut named: Option<String> = None;
     let mut hub: Option<String> = None;
-    let mut private = false;
+    let mut private: Option<bool> = None;
     let mut target = "head".to_owned();
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -182,7 +186,15 @@ fn push(arguments: Vec<String>) -> Result<(), Failure> {
                     .ok_or_else(|| Failure::Usage("`--hub` wants a hub's address".into()))?;
                 hub = Some(address(&given)?);
             }
-            "--private" => private = true,
+            flag @ ("--public" | "--private") => {
+                let chosen = flag == "--private";
+                if private.is_some_and(|private| private != chosen) {
+                    return Err(Failure::Usage(
+                        "`push` takes `--public` or `--private`, not both".into(),
+                    ));
+                }
+                private = Some(chosen);
+            }
             "--target" => {
                 target = arguments
                     .next()
@@ -200,6 +212,13 @@ fn push(arguments: Vec<String>) -> Result<(), Failure> {
                 )));
             }
         }
+    }
+
+    if private.is_none() && !io::stdin().is_terminal() {
+        return Err(Failure::Usage(
+            "say who may read the push: `--public` for anyone, `--private` for you and its members"
+                .into(),
+        ));
     }
 
     let config = Config::read()?;
@@ -235,9 +254,14 @@ fn push(arguments: Vec<String>) -> Result<(), Failure> {
         )));
     }
 
+    let private = match private {
+        Some(private) => private,
+        None => visibility(&repository, &format!("{hub}/{owner}/{slug}"))?,
+    };
     eprintln!(
-        "historica hub: pushing {} to {hub}/{owner}/{slug}",
-        repository.display()
+        "historica hub: pushing {} to {hub}/{owner}/{slug}, {}",
+        repository.display(),
+        if private { "private" } else { "public" }
     );
     let place = config::state()?
         .join(config::named(&hub))
@@ -258,6 +282,33 @@ fn push(arguments: Vec<String>) -> Result<(), Failure> {
         println!("  git clone {hub}/{owner}/{slug}.git");
     }
     Ok(())
+}
+
+/// Whether the push of `repository` to `at` is private, asked at the
+/// terminal: a push says who may read what it publishes, and with no
+/// terminal to ask in, `--public` or `--private` says it, as [`push`] checks
+/// before anything else.
+fn visibility(repository: &Path, at: &str) -> Result<bool, Failure> {
+    eprint!(
+        "push {} to {at}, readable by anyone (public) or by you and its members (private)? ",
+        repository.display()
+    );
+    let mut answer = String::new();
+    io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| Failure::error(format!("reading the answer: {error}")))?;
+    chosen(&answer)
+        .ok_or_else(|| Failure::error("nothing was pushed: answer `public` or `private`"))
+}
+
+/// An answer to [`visibility`]: whether it says private, or `None` where it
+/// says neither.
+fn chosen(answer: &str) -> Option<bool> {
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "public" => Some(false),
+        "private" => Some(true),
+        _ => None,
+    }
 }
 
 /// The account's handle: as kept at login, or else asked of the hub, which
@@ -326,6 +377,15 @@ mod tests {
     fn store(at: &Path) {
         fs::create_dir_all(at.join("history")).unwrap();
         fs::write(at.join("history/historica.txt"), "historica-1\n").unwrap();
+    }
+
+    #[test]
+    fn only_a_whole_word_chooses_who_may_read() {
+        assert_eq!(chosen("public\n"), Some(false));
+        assert_eq!(chosen(" Private \n"), Some(true));
+        assert_eq!(chosen("\n"), None);
+        assert_eq!(chosen("y\n"), None);
+        assert_eq!(chosen("pub\n"), None);
     }
 
     #[test]

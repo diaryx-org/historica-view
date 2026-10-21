@@ -192,9 +192,15 @@ historica hub login                    # or: historica hub login <hub>
 and in a repository:
 
 ```console
-historica hub push                     # <hub>/<your handle>/<folder name>
+historica hub push                     # <hub>/<your handle>/<folder name>, asked public or private
 historica hub push notes --private     # <hub>/<your handle>/notes, private
+historica hub push --public            # readable by anyone
 ```
+
+Every push says who may read it: `--public` for anyone, `--private` for you
+and the members you add. Without either, it asks at the terminal, and with no
+terminal to ask in, it pushes nothing. The flag sets an existing
+repository's visibility too.
 
 The repository is the nearest folder, here or above, with a store in
 `history/`, but `push` looks no higher than the top of the git checkout it is
@@ -238,7 +244,7 @@ shell:
 ```console
 cargo install --locked --path cli
 historica hub login http://localhost:8787
-cd ~/some/repo && historica hub push
+cd ~/some/repo && historica hub push --private
 ```
 
 Pushing again sends only what changed since the last push, and the

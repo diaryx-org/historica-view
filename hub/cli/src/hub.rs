@@ -172,16 +172,14 @@ pub fn push(
     let api = format!("/api/repos/{owner}/{slug}");
     let remembered = place.join("sent");
 
-    // Make the repository, or check it is ours.
-    if private {
-        hub.call(
-            "PUT",
-            &api,
-            Some(("application/json", br#"{"private":true}"#)),
-        )?;
+    // Make the repository, or check it is ours, and make it as private as
+    // this push says.
+    let settings: &[u8] = if private {
+        br#"{"private":true}"#
     } else {
-        hub.call("PUT", &api, None)?;
-    }
+        br#"{"private":false}"#
+    };
+    hub.call("PUT", &api, Some(("application/json", settings)))?;
 
     let mut sent: BTreeSet<String> = fs::read_to_string(&remembered)
         .map(|text| text.lines().map(str::to_owned).collect())
