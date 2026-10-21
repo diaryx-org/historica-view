@@ -1,0 +1,59 @@
+/* The hub's own styles, after unit's: the page round unit's components, in
+   unit's tokens, so light and dark follow the theme. */
+
+:root { color-scheme: light dark; }
+html, body { margin: 0; }
+.hub {
+  --hub-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  min-height: 100vh;
+  background: var(--unit-bg);
+  color: var(--unit-text);
+}
+.hub a { color: var(--unit-accent); }
+.hub code { font-family: var(--hub-mono); font-size: 0.9em; }
+
+.hub-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--unit-separator);
+  background: var(--unit-surface);
+}
+.hub-header a { color: var(--unit-dim); text-decoration: none; padding: 2px 8px; border-radius: var(--unit-radius); }
+.hub-header a:hover { color: var(--unit-text); background: var(--unit-control-hover); }
+.hub-header .hub-brand { font-weight: 600; color: var(--unit-text); padding-left: 0; }
+.hub-header .hub-brand:hover { background: none; }
+.hub-repo-nav { display: flex; gap: 2px; flex-wrap: wrap; }
+.hub-header .hub-slug { font-family: var(--hub-mono); color: var(--unit-text); }
+
+.hub-page { max-width: 920px; margin: 0 auto; padding: 16px 16px 48px; display: flex; flex-direction: column; gap: 12px; }
+.hub-page > .unit-heading { margin: 8px 0 0; }
+
+.hub-listing a.hub-listed { display: block; font-family: var(--hub-mono); text-decoration: none; padding: 10px 14px; }
+.hub-listing a.hub-listed:hover { background: var(--unit-control-hover); }
+
+.hub-description { font-size: 1.1em; margin: 0; }
+.hub-facts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--unit-dim); }
+.hub-latest { color: var(--unit-dim); margin: 0; }
+.hub-latest code { font-size: 0.85em; }
+
+.hub-command { display: flex; align-items: center; gap: 10px; }
+.hub-command-label { width: 64px; flex: none; color: var(--unit-dim); }
+.hub-command code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.hub-form { max-width: 380px; }
+
+/* A README, as historica-view renders it. */
+.hub-readme .unit-card-title { font-family: var(--hub-mono); font-weight: normal; font-size: 0.9em; }
+.hub-markdown { font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; }
+.hub-markdown h1, .hub-markdown h2 { border-bottom: 1px solid var(--unit-separator); padding-bottom: 4px; }
+.hub-markdown h1 { font-size: 26px; }
+.hub-markdown img { max-width: 100%; }
+.hub-markdown pre { line-height: 1.45; background: var(--unit-bg); padding: 10px 12px; border-radius: var(--unit-radius); overflow-x: auto; }
+.hub-markdown :not(pre) > code { background: var(--unit-bg); padding: 1px 4px; border-radius: 4px; }
+.hub-markdown table { border-collapse: collapse; }
+.hub-markdown th, .hub-markdown td { border: 1px solid var(--unit-border); padding: 4px 10px; }
+.hub-markdown blockquote { margin: 0; padding: 0 14px; border-left: 3px solid var(--unit-border); color: var(--unit-dim); }
+.hub-markdown a:not([href]) { color: inherit; text-decoration: underline dotted; }

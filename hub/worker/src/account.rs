@@ -6,9 +6,10 @@
 //! cookie is, which better-auth answers at `/api/auth/get-session`, and whose
 //! push key a bearer token is, at `/internal/key`.
 
+use historica_hub_app::Key;
 use serde::Deserialize;
 use wasm_bindgen::JsValue;
-use worker::{Env, Headers, Method, Request, RequestInit, Result};
+use worker::{Env, Headers, Method, Request, RequestInit, Response, Result};
 
 use crate::AUTH;
 
@@ -19,6 +20,10 @@ pub struct Account {
     /// The account's handle, which its repositories are under; `None` until
     /// it chooses one.
     pub username: Option<String>,
+    /// The account's address, which a session's answer has and a push key's
+    /// does not.
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 /// Who sent `request`: a push key as its bearer token, or else a session
@@ -36,17 +41,9 @@ pub async fn of(env: &Env, request: &Request) -> Result<Option<Account>> {
 
 /// Whose session `request`'s cookie is.
 pub async fn by_session(env: &Env, request: &Request) -> Result<Option<Account>> {
-    let Some(cookie) = request.headers().get("cookie")? else {
+    let Some(mut answer) = as_session(env, request, "get-session").await? else {
         return Ok(None);
     };
-    let headers = Headers::new();
-    headers.set("cookie", &cookie)?;
-    let mut init = RequestInit::new();
-    init.with_method(Method::Get).with_headers(headers);
-    let mut answer = env
-        .service(AUTH)?
-        .fetch("https://auth/api/auth/get-session", Some(init))
-        .await?;
     if answer.status_code() != 200 {
         return Ok(None);
     }
@@ -56,6 +53,48 @@ pub async fn by_session(env: &Env, request: &Request) -> Result<Option<Account>>
     }
     let session: Option<Session> = answer.json().await.unwrap_or(None);
     Ok(session.map(|session| session.user))
+}
+
+/// The push keys of the account whose session `request`'s cookie is: what
+/// better-auth lists, which is never a key itself.
+pub async fn keys(env: &Env, request: &Request) -> Result<Vec<Key>> {
+    let Some(mut answer) = as_session(env, request, "api-key/list").await? else {
+        return Ok(Vec::new());
+    };
+    if answer.status_code() != 200 {
+        return Ok(Vec::new());
+    }
+    // A list, or a list under `apiKeys`, by better-auth's version.
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Listed {
+        Bare(Vec<Key>),
+        Wrapped {
+            #[serde(rename = "apiKeys")]
+            api_keys: Vec<Key>,
+        },
+    }
+    Ok(match answer.json().await {
+        Ok(Listed::Bare(keys) | Listed::Wrapped { api_keys: keys }) => keys,
+        Err(_) => Vec::new(),
+    })
+}
+
+/// A `GET` of better-auth's `path` under `/api/auth/`, with `request`'s
+/// cookie: `None` with no cookie to send.
+async fn as_session(env: &Env, request: &Request, path: &str) -> Result<Option<Response>> {
+    let Some(cookie) = request.headers().get("cookie")? else {
+        return Ok(None);
+    };
+    let headers = Headers::new();
+    headers.set("cookie", &cookie)?;
+    let mut init = RequestInit::new();
+    init.with_method(Method::Get).with_headers(headers);
+    let answer = env
+        .service(AUTH)?
+        .fetch(format!("https://auth/api/auth/{path}"), Some(init))
+        .await?;
+    Ok(Some(answer))
 }
 
 /// Whose push key `key` is.

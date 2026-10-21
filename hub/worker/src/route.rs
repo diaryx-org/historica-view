@@ -17,6 +17,8 @@
 //! /<owner>/<slug>.git/…         the git mirror, for `git clone`
 //! /api/repos/<owner>/<slug>/…   pushes, forks and members
 //! /api/account                  whose push key a request sends
+//! /account/                     signing in, the handle, the push keys
+//! /style.css                    every page's stylesheet
 //! ```
 //!
 //! Nothing here reads a repository or asks who may: a route only names what
@@ -38,6 +40,10 @@ pub enum Route {
     /// `/api/account`: who the request is from, which is how a push tool
     /// learns its key's handle.
     AccountApi,
+    /// `/account/`: signing in, the handle, and the push keys.
+    Account,
+    /// `/style.css`: unit's stylesheet and the hub's, for every page.
+    Style,
     /// `/api/repos/<owner>/<slug>/…`: a change to a repository.
     Api { repo: Named, rest: Vec<String> },
     /// `/<owner>/<slug>`: a repository's front page.
@@ -94,6 +100,9 @@ impl Route {
         if path == crate::PAGE_API {
             return Route::PageApi;
         }
+        if path == crate::STYLESHEET {
+            return Route::Style;
+        }
         if path.starts_with(AUTH_PREFIX) {
             return Route::Auth;
         }
@@ -105,6 +114,7 @@ impl Route {
         let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
         match parts.as_slice() {
             [""] => Route::Home,
+            ["account"] | ["account", ""] => Route::Account,
             ["api", "repos", owner, slug, rest @ ..] => match named(owner, slug) {
                 Some(repo) => Route::Api {
                     repo,
@@ -227,6 +237,15 @@ mod tests {
             repo: repo(owner, slug),
             within,
         }
+    }
+
+    #[test]
+    fn the_account_page_and_the_stylesheet_are_the_hub_s() {
+        assert_eq!(Route::of("/account"), Route::Account);
+        assert_eq!(Route::of("/account/"), Route::Account);
+        assert_eq!(Route::of("/style.css"), Route::Style);
+        // Under the reserved name, nothing is a repository.
+        assert_eq!(Route::of("/account/keys"), Route::NotHere);
     }
 
     #[test]
