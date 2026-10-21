@@ -21,7 +21,7 @@ serde_json.workspace = true
 sha2 = "0.11"
 # The store's `history/`, as the one archive the hub opens it from.
 tar = { version = "0.4", default-features = false }
-# Blocking HTTP is all a push needs: one request after another. No gzip:
+# Blocking HTTP is all a push needs, a few requests at once on threads. No gzip:
 # the worker can answer an empty body marked as compressed, which ureq's
 # decoder refuses.
 ureq = { version = "3.4", default-features = false, features = ["rustls"] }

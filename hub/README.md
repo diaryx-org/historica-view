@@ -196,11 +196,17 @@ historica hub push                     # <hub>/<your handle>/<folder name>
 historica hub push notes --private     # <hub>/<your handle>/notes, private
 ```
 
+The repository is the nearest folder, here or above, with a store in
+`history/`, but `push` looks no higher than the top of the git checkout it is
+run in: a checkout without a store of its own is refused rather than pushed
+as part of a folder around it. It names the folder it pushes before it
+sends anything.
+
 `push` writes the export and its paged manifest with `historica`, and the
 git mirror with `historica-git` and `git` where they are installed; without
 them the push says so, and `git clone` does not reach it. It keeps that copy
 between pushes, under the cache directory, and sends only the files the
-last push did not, with the manifest last. The static view is not sent: the
+last push did not, eight at a time, with the manifest last. The static view is not sent: the
 hub serves its own. `HUB_TOKEN`, where it is set, is the key in place of
 the one kept. `historica hub help` has the rest.
 
