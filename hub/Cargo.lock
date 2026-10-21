@@ -682,7 +682,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1663,7 +1663,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2159,7 +2159,7 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 [[package]]
 name = "unit"
 version = "0.0.0"
-source = "git+https://github.com/diaryx-org/unit?branch=main#cdb0718fa2262c986a58099e7de05705e974d3e0"
+source = "git+https://github.com/diaryx-org/unit?branch=main#b1390d38838999392cad9d6b358c8c99363d5acb"
 dependencies = [
  "dioxus",
 ]
