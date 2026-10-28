@@ -4,8 +4,9 @@
 //! ```text
 //! PUT    /api/repos/<owner>/<slug>                   make it, or make it private or public
 //! PUT    /api/repos/<owner>/<slug>/blobs/<digest>    the bytes of one file
-//! PUT    /api/repos/<owner>/<slug>/site              the site listing
-//! PUT    /api/repos/<owner>/<slug>/offer             the manifest, last
+//! PUT    /api/repos/<owner>/<slug>/site              the site listing, staged
+//! PUT    /api/repos/<owner>/<slug>/offer?site=<sha256>[&force=1]
+//!                                                    the manifest, last
 //! POST   /api/repos/<owner>/<slug>/fork              a fork, under the sender's handle
 //! GET    /api/repos/<owner>/<slug>/members           who the owner added
 //! PUT    /api/repos/<owner>/<slug>/members/<handle>  add one
@@ -23,6 +24,26 @@
 //! `push.sh` sends the bytes of every file the hub has not had from it, then
 //! the site listing, then the manifest. The manifest is what moves when the
 //! repository is pushed to, so everything it names is there before it moves.
+//!
+//! The site listing is staged under its own digest, not served, and the
+//! manifest names it by that digest, in its metadata. So taking the manifest
+//! is the one write that moves the repository: a push refused at the last
+//! step, or stopped halfway, leaves what is served as it was.
+//!
+//! # No push replaces history
+//!
+//! A push moves the repository only forward: the manifest is refused unless
+//! the copy it lists holds every head of the copy the hub has, which is to
+//! say all of its history ([`Lineage::lacks`]). A copy without one is work
+//! pushed from somewhere else that this push would drop, and the pusher
+//! fetches it first; `?force=1` takes the manifest anyway, as a prune or a
+//! publish of another target wants.
+//!
+//! The check reads the hub's manifest, and the manifest is written only if
+//! it is still the one read: an R2 write conditional on its etag, or on there
+//! being none, which R2 decides atomically. Two pushes racing each other both
+//! pass the check, and the second to write is refused, so neither loses the
+//! other's work without being told.
 //!
 //! # Why every push sends the bytes
 //!
@@ -57,16 +78,18 @@
 //! repository's withdrawal of the same bytes can lose them; pushing again
 //! sends them again.
 
-use historica_view::published::Published;
+use std::collections::HashMap;
+
+use historica_view::published::{Lineage, Published};
 use serde::Deserialize;
-use worker::{Env, Method, Request, Response, Result};
+use worker::{Conditional, Env, Method, Request, Response, Result};
 
 use crate::BUCKET;
 use crate::account::{self, Account};
 use crate::db::{self, Row};
 use crate::gate::{self, Reader};
 use crate::route::{Named, handle_ok, slug_ok};
-use crate::site::{self, MANIFEST, SITE, Site, blob, digest_ok};
+use crate::site::{self, MANIFEST, SITE, SITE_METADATA, Site, blob, digest_ok, site_of, staged};
 
 /// A request to `/api/repos/<owner>/<slug>/<rest…>`.
 pub async fn answer(
@@ -110,8 +133,18 @@ pub async fn answer(
                     put_site(env, &row, &text).await
                 }
                 (Method::Put, ["offer"]) => {
+                    let query: HashMap<String, String> =
+                        request.url()?.query_pairs().into_owned().collect();
+                    let Some(site) = query.get("site").filter(|site| digest_ok(site)) else {
+                        return Response::error(
+                            "name the site listing this manifest goes with, as ?site=<its SHA-256 digest>; \
+                             a client that sends none is older than this hub, and wants updating",
+                            400,
+                        );
+                    };
+                    let force = query.get("force").is_some_and(|force| force == "1");
                     let text = request.text().await?;
-                    put_offer(env, &row, &text).await
+                    put_offer(env, &row, &text, site, force).await
                 }
                 (Method::Get, ["members"]) => {
                     let members = db::members(env, row.id).await?;
@@ -252,7 +285,8 @@ async fn put_blob(env: &Env, row: &Row, digest: &str, bytes: Vec<u8>) -> Result<
     Response::empty().map(|response| response.with_status(204))
 }
 
-/// `PUT …/site`: the site listing, naming only what the repository holds.
+/// `PUT …/site`: the site listing, naming only what the repository holds,
+/// staged by its digest for the manifest to name.
 async fn put_site(env: &Env, row: &Row, text: &str) -> Result<Response> {
     let listed = match site::listed(text) {
         Ok(listed) => listed,
@@ -262,15 +296,24 @@ async fn put_site(env: &Env, row: &Row, text: &str) -> Result<Response> {
     if let Some(refused) = unheld(env, row, &digests).await? {
         return Ok(refused);
     }
+    let digest = historica::format::digest(text.as_bytes()).to_string();
     env.bucket(BUCKET)?
-        .put(format!("{}{SITE}", gate::prefix(row.id)), text.to_owned())
+        .put(staged(&gate::prefix(row.id), &digest), text.to_owned())
         .execute()
         .await?;
     Response::empty().map(|response| response.with_status(204))
 }
 
-/// `PUT …/offer`: the manifest, which moves the repository to what it names.
-async fn put_offer(env: &Env, row: &Row, text: &str) -> Result<Response> {
+/// `PUT …/offer?site=<digest>`: the manifest, with the staged site listing
+/// whose digest is `listed_as`, which moves the repository to what they
+/// name, if it descends from what the repository has or `force` is given.
+async fn put_offer(
+    env: &Env,
+    row: &Row,
+    text: &str,
+    listed_as: &str,
+    force: bool,
+) -> Result<Response> {
     let mut published = match Published::read(text) {
         Ok(published) => published,
         Err(failure) => return Response::error(format!("{MANIFEST}: {}", failure.0), 400),
@@ -291,9 +334,21 @@ async fn put_offer(env: &Env, row: &Row, text: &str) -> Result<Response> {
         Ok(listing) => listing,
         Err(failure) => return Response::error(failure.0, 400),
     };
+    let lineage = match published.lineage() {
+        Ok(lineage) => lineage,
+        Err(failure) => return Response::error(failure.0, 400),
+    };
     let prefix = gate::prefix(row.id);
-    let Some(listed) = bucket.get(format!("{prefix}{SITE}")).execute().await? else {
-        return Response::error(format!("push {SITE} before {MANIFEST}"), 409);
+    let site_key = staged(&prefix, listed_as);
+    // A 409, as for a file the hub lacks, so a client sends it again.
+    let Some(listed) = bucket.get(&site_key).execute().await? else {
+        return Response::error(
+            format!(
+                "no site listing {listed_as} has been pushed to {}: push it first",
+                row.named.spelled()
+            ),
+            409,
+        );
     };
     let listed = listed
         .body()
@@ -308,16 +363,106 @@ async fn put_offer(env: &Env, row: &Row, text: &str) -> Result<Response> {
     if let Some(refused) = unheld(env, row, &named).await? {
         return Ok(refused);
     }
-    bucket
-        .put(format!("{prefix}{MANIFEST}"), text.to_owned())
+
+    // What the repository has now, which this push must descend from.
+    let manifest_key = format!("{prefix}{MANIFEST}");
+    let current = bucket.get(&manifest_key).execute().await?;
+    let only_if = match &current {
+        Some(current) => Conditional {
+            etag_matches: Some(current.etag()),
+            ..Conditional::default()
+        },
+        None => Conditional {
+            etag_does_not_match: Some("*".into()),
+            ..Conditional::default()
+        },
+    };
+    let previous_site = match &current {
+        Some(current) => Some(site_of(&prefix, current)?),
+        None => None,
+    };
+    if let Some(current) = current
+        && !force
+    {
+        let spelled = row.named.spelled();
+        let earlier = match lineage_of(&bucket, current).await {
+            Ok(earlier) => earlier,
+            Err(why) => {
+                return Response::error(
+                    format!(
+                        "{spelled}'s copy on the hub cannot be read to compare with ({why}): \
+                         push with --force to replace it"
+                    ),
+                    412,
+                );
+            }
+        };
+        let lacking = lineage.lacks(&earlier);
+        if !lacking.is_empty() {
+            let shown: Vec<&str> = lacking.iter().take(20).copied().collect();
+            return Response::error(
+                format!(
+                    "{spelled} has history this push does not: {} {} not in it. \
+                     Fetch its offer.txt into your store and push again, \
+                     or push with --force to replace that history.\n{}",
+                    lacking.len(),
+                    if lacking.len() == 1 {
+                        "head of the hub's copy is"
+                    } else {
+                        "heads of the hub's copy are"
+                    },
+                    shown.join("\n"),
+                ),
+                412,
+            );
+        }
+    }
+
+    let mut metadata = HashMap::new();
+    metadata.insert(SITE_METADATA.to_owned(), listed_as.to_owned());
+    let taken = bucket
+        .put(&manifest_key, text.to_owned())
+        .custom_metadata(metadata)
+        .only_if(only_if)
         .execute()
         .await?;
+    if taken.is_none() {
+        return Response::error(
+            format!(
+                "{} was pushed to while this push was being made: push again",
+                row.named.spelled()
+            ),
+            412,
+        );
+    }
+    if let Some(previous) = previous_site
+        && previous != site_key
+    {
+        bucket.delete(previous).await?;
+    }
     let orphans = db::settle(env, row.id, &named).await?;
     for chunk in orphans.chunks(1000) {
         let keys: Vec<String> = chunk.iter().map(|digest| blob(digest)).collect();
         bucket.delete_multiple(keys).await?;
     }
     Response::empty().map(|response| response.with_status(204))
+}
+
+/// The lineage of the copy `manifest`, a repository's manifest object, lists.
+async fn lineage_of(
+    bucket: &worker::Bucket,
+    manifest: worker::Object,
+) -> std::result::Result<Lineage, String> {
+    let body = manifest.body().ok_or("its manifest has no body")?;
+    let text = body.text().await.map_err(|error| error.to_string())?;
+    let mut published = Published::read(&text).map_err(|failure| failure.0)?;
+    for (path, digest) in published.pages() {
+        let bytes = read(bucket, &blob(&digest))
+            .await
+            .map_err(|error| error.to_string())?;
+        published.page(&path, &bytes).map_err(|failure| failure.0)?;
+    }
+    published.lineage().map_err(|failure| failure.0)
 }
 
 /// The refusal for a listing that names digests the repository does not
@@ -390,19 +535,26 @@ async fn fork(
         return Response::error(format!("you have a {} already", into.spelled()), 409);
     }
     let bucket = env.bucket(BUCKET)?;
-    let mut copied = Vec::new();
-    for name in [MANIFEST, SITE] {
-        let key = format!("{}{name}", parent.prefix());
-        let Some(object) = bucket.get(&key).execute().await? else {
-            return Response::error(format!("nothing is pushed to {} yet", named.spelled()), 409);
-        };
-        let bytes = object
-            .body()
-            .ok_or_else(|| worker::Error::RustError(format!("{key} has no body")))?
-            .bytes()
-            .await?;
-        copied.push((name, bytes));
-    }
+    let not_yet = || Response::error(format!("nothing is pushed to {} yet", named.spelled()), 409);
+    let manifest_key = format!("{}{MANIFEST}", parent.prefix());
+    let Some(manifest) = bucket.get(&manifest_key).execute().await? else {
+        return not_yet();
+    };
+    let site_key = site_of(&parent.prefix(), &manifest)?;
+    let manifest = manifest
+        .body()
+        .ok_or_else(|| worker::Error::RustError(format!("{manifest_key} has no body")))?
+        .bytes()
+        .await?;
+    let Some(listed) = bucket.get(&site_key).execute().await? else {
+        return not_yet();
+    };
+    let listed = listed
+        .body()
+        .ok_or_else(|| worker::Error::RustError(format!("{site_key} has no body")))?
+        .bytes()
+        .await?;
+    let site = historica::format::digest(&listed).to_string();
     let chain = db::chain(env, parent.id(), &reader)
         .await?
         .ok_or_else(|| worker::Error::RustError("the repository is not there".into()))?;
@@ -412,13 +564,17 @@ async fn fork(
         .await?
         .ok_or_else(|| worker::Error::RustError("the fork is not there".into()))?;
     db::inherit(env, parent.id(), row.id).await?;
-    // The manifest last, as a push writes it.
-    for (name, bytes) in copied.into_iter().rev() {
-        bucket
-            .put(format!("{}{name}", gate::prefix(row.id)), bytes)
-            .execute()
-            .await?;
-    }
+    // The site listing staged and the manifest naming it, as a push writes
+    // them.
+    let prefix = gate::prefix(row.id);
+    bucket.put(staged(&prefix, &site), listed).execute().await?;
+    let mut metadata = HashMap::new();
+    metadata.insert(SITE_METADATA.to_owned(), site);
+    bucket
+        .put(format!("{prefix}{MANIFEST}"), manifest)
+        .custom_metadata(metadata)
+        .execute()
+        .await?;
     described(&row).map(|response| response.with_status(201))
 }
 

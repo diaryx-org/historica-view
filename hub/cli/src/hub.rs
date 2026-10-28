@@ -4,7 +4,12 @@
 //!
 //! 1. the bytes of each file not sent before, to `…/blobs/<sha256>`;
 //! 2. the site listing, `<sha256> <path>` for every file but `offer.txt`;
-//! 3. `offer.txt`, the manifest, which moves the repository to what it names.
+//! 3. `offer.txt`, the manifest, which moves the repository to what it names,
+//!    with the site listing's digest beside it.
+//!
+//! The hub takes the manifest only where the copy holds every head the
+//! hub's does: a push never drops history pushed from somewhere else
+//! unless it is forced.
 //!
 //! The hub never says whether it holds a blob already. What was sent is
 //! remembered beside the site, so a push sends what changed since the last;
@@ -21,8 +26,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
 use ureq::Agent;
 
+use crate::config::hex;
 use crate::site::{Built, MANIFEST};
 
 /// A hub, and the push key its requests carry.
@@ -52,6 +59,12 @@ impl Refused {
             status: None,
             message: message.to_string(),
         }
+    }
+
+    /// Whether the hub refused the push because its copy is not one this
+    /// push descends from, or moved while it was made.
+    pub fn diverged(&self) -> bool {
+        self.status == Some(412)
     }
 
     /// Whether the hub lacks something a request named.
@@ -166,6 +179,7 @@ pub fn push(
     owner: &str,
     slug: &str,
     private: bool,
+    force: bool,
     built: &Built,
     place: &Path,
 ) -> Result<usize, Refused> {
@@ -187,6 +201,11 @@ pub fn push(
     let listing = built.listing_text();
     let manifest = fs::read(built.site.join(MANIFEST))
         .map_err(|error| Refused::other(format!("{MANIFEST}: {error}")))?;
+    let offer = format!(
+        "{api}/offer?site={}{}",
+        hex(&Sha256::digest(listing.as_bytes())),
+        if force { "&force=1" } else { "" }
+    );
 
     let mut uploaded = 0;
     let mut again = false;
@@ -198,13 +217,7 @@ pub fn push(
                 &format!("{api}/site"),
                 Some(("text/plain", listing.as_bytes())),
             )
-            .and_then(|()| {
-                hub.call(
-                    "PUT",
-                    &format!("{api}/offer"),
-                    Some(("text/plain", &manifest)),
-                )
-            });
+            .and_then(|()| hub.call("PUT", &offer, Some(("text/plain", &manifest))));
         match moved {
             Ok(()) => break,
             Err(refused) if refused.missing() && !again => {

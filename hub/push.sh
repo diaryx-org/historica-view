@@ -8,7 +8,8 @@
 # published at <hub>/<owner>/<slug>: <owner> is your handle on the hub, and
 # <slug> the folder's name unless given. HUB_TOKEN is a push key, made at
 # <hub>/account/. The first push makes the repository, private when
-# HUB_PRIVATE=1; you can push only to your own.
+# HUB_PRIVATE=1; you can push only to your own. A push is refused where the
+# hub has history this copy does not; HUB_FORCE=1 replaces it.
 #
 # What goes up is what ../publish.sh makes — the static view, the export, its
 # paged manifest and the git mirror — plus `history.tar`, the export's
@@ -18,7 +19,9 @@
 #
 #   1. the bytes of each file not sent before, to …/blobs/<sha256>;
 #   2. the site listing, `<sha256> <path>` for every file but offer.txt;
-#   3. offer.txt, the manifest, which moves the repository to what it names.
+#   3. offer.txt, the manifest, with the site listing's digest, which moves
+#      the repository to what they name if the copy holds every head the
+#      hub's does.
 #
 # The hub takes a file only with its bytes, and never says whether it had
 # them already. What was sent is remembered here, beside the site, in
@@ -29,7 +32,7 @@
 set -eu
 
 usage() {
-  sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -101,8 +104,10 @@ send_blobs() {
 uploaded=0
 again=0
 send_blobs
+offer="$api/offer?site=$(sha256sum "$listing" | cut -d' ' -f1)"
+[ "${HUB_FORCE:-}" = 1 ] && offer="$offer&force=1"
 until call PUT "$api/site" --data-binary "@$listing" &&
-  call PUT "$api/offer" --data-binary "@$site/offer.txt"; do
+  call PUT "$offer" --data-binary "@$site/offer.txt"; do
   failed=$?
   # The hub lacks something this remembers sending: send it all, once.
   [ "$failed" = 9 ] && [ "$again" = 0 ] || exit 1

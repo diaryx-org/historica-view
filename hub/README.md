@@ -14,7 +14,8 @@ Kept apart from the page in its own workspace so it can be taken out whole.
 ```
  historica hub push ──PUT──▶ worker ──▶ R2  blobs/sha256/<digest>   every file, once, whoever pushed it
                                             repos/<id>/offer.txt     a repository's manifest
-                                            repos/<id>/site.txt      its site listing: <digest> <path>
+                                            repos/<id>/sites/<sha>   its site listing: <digest> <path>,
+                                                                     the one the manifest names
 
  browser ──GET /<owner>/<slug>──▶ worker ──gate──▶ Repository (Durable Object, one per repository)
                                     │        reads the manifest, its pages and the site
@@ -91,7 +92,7 @@ contribution is a fork, which is the contributor's own.
 | `/<owner>/<slug>/raw/<path>` | a file of the exported folder, as a README links to it |
 | `/<owner>/<slug>.git` | the git mirror: `git clone` it |
 | `/api/repos/<owner>/<slug>` | `PUT`: make it, or make it private or public |
-| `…/blobs/<digest>`, `…/site`, `…/offer` | `PUT`: a push, in that order |
+| `…/blobs/<digest>`, `…/site`, `…/offer?site=<digest>` | `PUT`: a push, in that order; `&force=1` replaces history |
 | `…/fork` | `POST`: fork it, as `{"slug": …}` or by the same name |
 | `…/members`, `…/members/<handle>` | `GET`, and `PUT` or `DELETE` one |
 
@@ -104,9 +105,13 @@ the bucket. Each repository has two listings of its own:
 
 - **the manifest**, `offer.txt`, and its pages, which name every file of the
   copy `historica fetch` takes by the digest it is checked against;
-- **the site listing**, `site.txt`, which names the rest of what
-  `publish.sh` lays out: the static view, the git mirror, the store's
-  `historica.txt`, the exported folder, and `history.tar`.
+- **the site listing**, which names the rest of what `publish.sh` lays
+  out: the static view, the git mirror, the store's `historica.txt`, the
+  exported folder, and `history.tar`. A push stages it under its own
+  digest, `sites/<digest>`, and the manifest names that digest in its
+  metadata, so it is served only once the manifest moves. A repository not
+  pushed to since the hub did this still has `site.txt`, which its
+  manifest, naming nothing, falls back to.
 
 `/<owner>/<slug>/<path>` is the blob that repository's own listings name at
 `<path>`, and a path neither names is a `404`, whatever the bucket holds. So a
@@ -122,6 +127,26 @@ pushing whether a file is in someone else's repository. The worker's
 When a manifest is taken, the repository stops holding what its listings no
 longer name, and a blob no repository holds is deleted: a `forget` at the
 origin destroys the bytes on the hub too, unless a fork still serves them.
+
+## Pushes only add history
+
+A push moves a repository forward. The hub takes a manifest only where the
+copy it lists holds every head of the copy the hub has: a revision names
+its parents, so holding the hub's heads is holding all of its history. A
+push that would drop some, because another device pushed work this store
+has not fetched, or the store was pruned, or another `--target` is being
+published, is refused with a `412` naming the heads it lacks.
+`historica fetch <hub>/<owner>/<slug>/offer.txt` takes them, and the push
+goes through after; `historica hub push --force` (`HUB_FORCE=1` for
+`push.sh`) replaces them instead.
+
+The check and the write cannot be split by another push. The manifest is
+written only if it is still the one the check read, by R2's conditional
+write on its etag (or on there being none, for a repository's first push),
+which R2 decides atomically; the push that loses is refused with a `412`
+and pushes again. And since the manifest is the one write that changes what
+is served, a refused push, or one stopped halfway, leaves the repository as
+it was.
 
 ## Forks
 
@@ -206,6 +231,10 @@ historica hub push                     # <hub>/<your handle>/<folder name>, aske
 historica hub push notes --private     # <hub>/<your handle>/notes, private
 historica hub push --public            # readable by anyone
 ```
+
+A push that would drop history the hub has, from another device say, is
+refused: fetch it into the store and push again, or `--force` to replace
+it (above).
 
 Every push says who may read it: `--public` for anyone, `--private` for you
 and the members you add. Without either, it asks at the terminal, and with no

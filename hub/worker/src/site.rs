@@ -35,8 +35,30 @@ use crate::route::Within;
 /// is what moves when the repository is pushed to.
 pub const MANIFEST: &str = "offer.txt";
 
-/// The site listing, the repository's own object beside the manifest.
+/// The site listing, the repository's own object beside the manifest, as
+/// the hub kept it before a manifest named its listing. A repository not
+/// pushed to since still has one, and no metadata on its manifest.
 pub const SITE: &str = "site.txt";
+
+/// The manifest's custom metadata naming the site listing it goes with.
+pub const SITE_METADATA: &str = "site";
+
+/// Where repository `prefix`'s site listing whose text hashes to `digest`
+/// is kept. A push stages its listing here, and it is served only once a
+/// manifest names it, so the manifest is the one write that moves the
+/// repository.
+pub fn staged(prefix: &str, digest: &str) -> String {
+    format!("{prefix}sites/{digest}")
+}
+
+/// Where the site listing that `manifest`, repository `prefix`'s manifest
+/// object, goes with is kept.
+pub fn site_of(prefix: &str, manifest: &worker::Object) -> worker::Result<String> {
+    Ok(match manifest.custom_metadata()?.get(SITE_METADATA) {
+        Some(digest) if digest_ok(digest) => staged(prefix, digest),
+        _ => format!("{prefix}{SITE}"),
+    })
+}
 
 /// The archive of the store that the Durable Object opens, as `push.sh`
 /// names it in the site listing.
