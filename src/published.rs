@@ -14,7 +14,10 @@
 //! trust, which is what decision 0048 already accepted of it.
 
 use historica::format::digest;
-use historica::store::{Manifest, Offer, Page, PageRef, STORE_DIR};
+use std::borrow::Cow;
+use std::collections::BTreeSet;
+
+use historica::store::{Manifest, Offer, OfferKind, Page, PageRef, STORE_DIR};
 use serde::Serialize;
 
 use crate::view::Failure;
@@ -125,20 +128,36 @@ impl Published {
         Ok(())
     }
 
-    /// Every file of the copy, once every page has arrived.
-    pub fn listing(&self) -> Result<Listing, Failure> {
-        let composed;
-        let offer = match &self.shape {
-            Shape::Whole(offer) => offer,
+    /// The whole listing, once every page has arrived.
+    fn offer(&self) -> Result<Cow<'_, Offer>, Failure> {
+        match &self.shape {
+            Shape::Whole(offer) => Ok(Cow::Borrowed(offer)),
             Shape::Paged { heads, pages, refs } => {
                 let held: Vec<Page> = pages.iter().flatten().cloned().collect();
                 if held.len() != refs.len() {
                     return Err(Failure("a page the manifest names has not arrived".into()));
                 }
-                composed = Offer::composed(heads.clone(), &held);
-                &composed
+                Ok(Cow::Owned(Offer::composed(heads.clone(), &held)))
             }
-        };
+        }
+    }
+
+    /// The copy's heads and every revision it holds, once every page has
+    /// arrived.
+    pub fn lineage(&self) -> Result<Lineage, Failure> {
+        let offer = self.offer()?;
+        Ok(Lineage {
+            heads: offer.heads().iter().map(ToString::to_string).collect(),
+            revisions: offer
+                .of(OfferKind::Revision)
+                .map(|entry| entry.digest.to_string())
+                .collect(),
+        })
+    }
+
+    /// Every file of the copy, once every page has arrived.
+    pub fn listing(&self) -> Result<Listing, Failure> {
+        let offer = self.offer()?;
         let marker = format!("{STORE_DIR}/");
         let prefix = offer
             .entries()
@@ -180,6 +199,35 @@ fn store_prefix<'a>(path: &'a str, marker: &str) -> Option<&'a str> {
     Some(&path[..at])
 }
 
+/// A copy's place in its history: its heads, and every revision it holds.
+///
+/// A revision's id is the digest of its document, which is what a manifest
+/// names it by, so the two sets compare without opening anything.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Lineage {
+    pub heads: BTreeSet<String>,
+    pub revisions: BTreeSet<String>,
+}
+
+impl Lineage {
+    /// The heads of `earlier` this copy does not hold: none where it
+    /// descends from `earlier`, having all of its history and perhaps more.
+    ///
+    /// A revision names its parents, and a copy holds the parents of every
+    /// revision it holds, so holding a head is holding everything before it.
+    /// A head missing here is history that taking this copy in place of
+    /// `earlier` would drop: work pushed from somewhere else, or a revision
+    /// pruned or published from another target since.
+    pub fn lacks<'a>(&self, earlier: &'a Lineage) -> Vec<&'a str> {
+        earlier
+            .heads
+            .iter()
+            .filter(|head| !self.revisions.contains(*head))
+            .map(String::as_str)
+            .collect()
+    }
+}
+
 /// Whether `bytes` are what a listed file's digest says.
 pub fn verified(bytes: &[u8], expected: &str) -> bool {
     digest(bytes).to_string() == expected
@@ -188,6 +236,35 @@ pub fn verified(bytes: &[u8], expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn lineage(heads: &[&str], revisions: &[&str]) -> Lineage {
+        Lineage {
+            heads: heads.iter().map(|head| head.to_string()).collect(),
+            revisions: revisions.iter().map(|id| id.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_copy_descends_from_one_whose_heads_it_holds() {
+        let earlier = lineage(&["b"], &["a", "b"]);
+        assert!(lineage(&["c"], &["a", "b", "c"]).lacks(&earlier).is_empty());
+        assert!(earlier.lacks(&earlier).is_empty());
+        assert!(
+            lineage(&["b"], &["a", "b"])
+                .lacks(&Lineage::default())
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_copy_without_an_earlier_head_does_not_descend() {
+        let earlier = lineage(&["c", "d"], &["a", "b", "c", "d"]);
+        assert_eq!(
+            lineage(&["e"], &["a", "b", "c", "e"]).lacks(&earlier),
+            ["d"]
+        );
+        assert_eq!(lineage(&["b"], &["a", "b"]).lacks(&earlier), ["c", "d"]);
+    }
 
     #[test]
     fn the_prefix_is_the_exported_folder() {

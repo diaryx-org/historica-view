@@ -37,7 +37,7 @@ usage: historica hub <command> [<arguments>]
                            one logged in to, or the hub's own address
   logout [<hub>]           forget the key kept for <hub>
   push [[<owner>/]<slug>] (--public | --private) [--hub <hub>]
-       [--target <target>]
+       [--target <target>] [--force]
                            publish this repository at <hub>/<owner>/<slug>:
                            <owner> is your handle and <slug> the folder's
                            name unless given. the first push makes the
@@ -45,7 +45,9 @@ usage: historica hub <command> [<arguments>]
                            --private only you and its members; each push
                            says which, and is asked at a terminal where it
                            does not. <target> is what to publish, `head`
-                           unless given. needs
+                           unless given. a push is refused where the hub
+                           has history it does not: fetch that first, or
+                           --force to replace it. needs
                            `historica` on PATH, and `historica-git` and `git`
                            for the git mirror, which is left out without them
 
@@ -177,6 +179,7 @@ fn push(arguments: Vec<String>) -> Result<(), Failure> {
     let mut hub: Option<String> = None;
     let mut private: Option<bool> = None;
     let mut target = "head".to_owned();
+    let mut force = false;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -200,6 +203,7 @@ fn push(arguments: Vec<String>) -> Result<(), Failure> {
                     .next()
                     .ok_or_else(|| Failure::Usage("`--target` wants a target".into()))?;
             }
+            "--force" => force = true,
             other if other.starts_with('-') => {
                 return Err(Failure::Usage(format!(
                     "`{other}` is not an argument `push` takes"
@@ -271,10 +275,16 @@ fn push(arguments: Vec<String>) -> Result<(), Failure> {
     for note in &built.notes {
         eprintln!("historica hub: {note}");
     }
-    let sent = hub::push(&client, &owner, &slug, private, &built, &place)
-        .map_err(|refused: Refused| Failure::error(refused))?;
-
     let at = format!("{hub}/{owner}/{slug}");
+    let sent = hub::push(&client, &owner, &slug, private, force, &built, &place).map_err(
+        |refused: Refused| match refused.diverged() {
+            true => Failure::error(format!(
+                "{refused}\n\nto take what the hub has, then push again:\n  historica fetch {at}/offer.txt"
+            )),
+            false => Failure::error(refused),
+        },
+    )?;
+
     println!("pushed {} to {at}: {sent} files sent", repository.display());
     println!("  {at}");
     println!("  historica fetch {at}/offer.txt");

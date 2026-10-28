@@ -14,7 +14,7 @@
 //!
 //! The store is opened from what `push.sh` uploaded: the manifest, its
 //! pages, and the store's `history/` as one archive, which the site listing
-//! names. Every file the manifest lists is taken from the archive and hashed
+//! the manifest names names. Every file the manifest lists is taken from the archive and hashed
 //! against the digest the manifest names it by, so an archive that disagrees
 //! with the manifest is refused rather than half-believed — the same check
 //! `historica fetch` makes, and the page makes, of a copy anywhere.
@@ -42,12 +42,12 @@ use worker::{Bucket, DurableObject, Env, Request, Response, Result, State, durab
 use crate::BUCKET;
 use crate::gate::prefix;
 use crate::route::Within;
-use crate::site::{MANIFEST, SITE, Site, blob};
+use crate::site::{MANIFEST, Site, blob, site_of};
 
 /// A repository's listings, as the manifest it read them with left them.
 struct Opened {
-    /// The manifest's etag: when R2's differs, the repository has been pushed
-    /// to since.
+    /// Which push it read: when R2's manifest says otherwise, the repository
+    /// has been pushed to since ([`pushed`]).
     etag: String,
     site: Site,
     listing: Listing,
@@ -55,7 +55,7 @@ struct Opened {
 
 /// A repository's store, open.
 struct Loaded {
-    /// The etag of the manifest it was opened by.
+    /// Which push it was opened by, as [`Opened::etag`].
     etag: String,
     view: View,
     revisions: usize,
@@ -158,14 +158,23 @@ impl Repository {
         let Some(manifest) = bucket.head(format!("{prefix}{MANIFEST}")).await? else {
             return Ok(None);
         };
-        let etag = manifest.http_etag();
         if let Some(opened) = self.opened.borrow().as_ref()
-            && opened.etag == etag
+            && opened.etag == pushed(&prefix, &manifest)?
         {
             return Ok(Some(opened.clone()));
         }
-        let text = String::from_utf8(read(&bucket, format!("{prefix}{MANIFEST}")).await?)
-            .map_err(|_| worker::Error::RustError("the manifest is not text".into()))?;
+        // Read again, whole, so the etag, the text and the site listing it
+        // names are all of one push.
+        let Some(manifest) = bucket.get(format!("{prefix}{MANIFEST}")).execute().await? else {
+            return Ok(None);
+        };
+        let etag = pushed(&prefix, &manifest)?;
+        let site_key = site_of(&prefix, &manifest)?;
+        let text = manifest
+            .body()
+            .ok_or_else(|| worker::Error::RustError("the manifest has no body".into()))?
+            .text()
+            .await?;
         let mut published = Published::read(&text).map_err(failed)?;
         let pages = published.pages();
         for (path, digest) in &pages {
@@ -173,7 +182,7 @@ impl Repository {
             published.page(path, &bytes).map_err(failed)?;
         }
         let listing = published.listing().map_err(failed)?;
-        let listed = String::from_utf8(read(&bucket, format!("{prefix}{SITE}")).await?)
+        let listed = String::from_utf8(read(&bucket, site_key).await?)
             .map_err(|_| worker::Error::RustError("the site listing is not text".into()))?;
         let site = Site::new(&pages, &listing, &listed).map_err(worker::Error::RustError)?;
         let opened = Rc::new(Opened {
@@ -266,6 +275,17 @@ impl Repository {
         *self.loaded.borrow_mut() = Some(loaded.clone());
         Ok(Some(loaded))
     }
+}
+
+/// Which push `manifest`, repository `prefix`'s manifest object, is: its
+/// etag, and the site listing it names. R2's etag is the hash of the bytes,
+/// so a push that changes only the site listing leaves it as it was.
+fn pushed(prefix: &str, manifest: &worker::Object) -> Result<String> {
+    Ok(format!(
+        "{} {}",
+        manifest.http_etag(),
+        site_of(prefix, manifest)?
+    ))
 }
 
 /// The front page of a repository.
