@@ -2,11 +2,17 @@
 title: A retargeted link is left out of its revision
 part_of: '[Tasks](tasks.md)'
 created: 2026-11-08T13:45:39.956366Z
-status: open
+status: done
 description: '`View::revision` reads both sides of a link as `Side::Other(None)`, so a revision that only points a link somewhere else compares its two sides as equal and lists no change to the file, while `file_history` lists the same revision as an edit of it'
 ---
 
 # A retargeted link is left out of its revision
+
+**Done** in `fix(view): list a retargeted link as a change of its revision`.
+`Side` has a `Link` variant carrying the tree entry's target, compared as
+historica's `LinkTarget`, so a link to a file that only moved is unchanged;
+the repro is `a_retargeted_link_is_a_change_of_its_revision` in
+`tests/view.rs`.
 
 [`View::revision`](../../src/view.rs) lists what a revision did to each file,
 and leaves a file out where its two sides compare equal and it neither moved
