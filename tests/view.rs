@@ -357,3 +357,36 @@ fn a_merge_shows_where_the_sides_met_and_what_was_settled_by_hand() {
         .collect();
     assert_eq!(hand, [('+', "three, said both")]);
 }
+
+#[cfg(unix)]
+#[test]
+fn a_retargeted_link_is_a_change_of_its_revision() {
+    let (base, mut store) = repository("retargeted-link");
+    fs::write(base.join("a.txt"), "a\n").unwrap();
+    fs::write(base.join("b.txt"), "b\n").unwrap();
+    std::os::unix::fs::symlink("a.txt", base.join("current")).unwrap();
+    let root = record_folder(&base, &mut store, vec![], "Point at a");
+    fs::remove_file(base.join("current")).unwrap();
+    std::os::unix::fs::symlink("b.txt", base.join("current")).unwrap();
+    let next = record_folder(&base, &mut store, vec![root], "Point at b");
+
+    let view = View::open(into_memory(&base.join("history"))).expect("the store opens");
+    let detail = view.revision(&next.to_string(), None).unwrap();
+    let files: Vec<_> = detail
+        .files
+        .iter()
+        .map(|change| (change.to.as_deref(), change.kind, change.hunks.is_none()))
+        .collect();
+    assert_eq!(files, [(Some("current"), "edited", true)]);
+
+    // The first revision adds the link, with nothing to compare it against.
+    let added: Vec<_> = view
+        .revision(&root.to_string(), None)
+        .unwrap()
+        .files
+        .into_iter()
+        .map(|change| (change.to, change.kind, change.hunks.is_none()))
+        .filter(|(to, ..)| to.as_deref() == Some("current"))
+        .collect();
+    assert_eq!(added, [(Some("current".to_owned()), "added", true)]);
+}

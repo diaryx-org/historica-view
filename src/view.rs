@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use historica::core::{ChangeId, FileId, RevisionId};
-use historica::format::{Mode, RevisionDocument};
+use historica::format::{LinkTarget, Mode, RevisionDocument};
 use historica::merge::Contest;
 use historica::store::{Content, Name, Store};
 use historica::tree::{Kind, Tree};
@@ -344,7 +344,7 @@ impl View {
                 _ => "mode",
             };
             let hunks = match (&old, &new) {
-                (Side::Other(_), _) | (_, Side::Other(_)) => None,
+                (Side::Other(_) | Side::Link(_), _) | (_, Side::Other(_) | Side::Link(_)) => None,
                 _ => hunks(text_or_empty(&old), text_or_empty(&new)),
             };
             changes.push(FileChange {
@@ -663,7 +663,8 @@ impl View {
         kind: Kind,
     ) -> Result<Side, Failure> {
         if kind == Kind::Link {
-            return Ok(Side::Other(None));
+            let target = tree.entry(file).and_then(|entry| entry.target.clone());
+            return Ok(Side::Link(target));
         }
         Ok(
             match self.store.content_in(tree, &[at], file).map_err(failed)? {
@@ -679,8 +680,11 @@ impl View {
 enum Side {
     Absent,
     Lines(String),
-    /// Bytes, by payload, or a link.
+    /// Bytes, by payload.
     Other(Option<RevisionId>),
+    /// A link, by what it points at: a file by identity, so a link to a file
+    /// that only moved has not changed, or else the string it holds.
+    Link(Option<LinkTarget>),
 }
 
 fn text_or_empty(side: &Side) -> &str {
